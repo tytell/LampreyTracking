@@ -91,3 +91,47 @@ get_excursions <- function(df) {
     mutate(exc = -(xmm - comx) * swimdiry + 
              (ymm - comy) * swimdirx)
 }
+
+get_cycles <- function(df) {
+  df <-
+    df %>%
+    group_by(bodyparts) %>%
+    mutate(excn = lead(exc),
+           zerocross = case_when(sign(excn) > sign(exc)   ~   1,
+                                 sign(excn) == sign(exc)  ~   0,
+                                 sign(excn) < sign(exc)   ~   -1,
+                                 TRUE   ~   0))
+  
+  zerocross <-
+    df %>%
+    group_by(bodyparts) %>%
+    filter(zerocross != 0) %>%
+    mutate(t0 = t + (1/fps)/(excn - exc) * (0-exc),
+           per = lead(t0)-lag(t0),
+           freqbody = 1/per) %>%
+    select(bodyparts, frame, t0, per,freqbody)
+
+  df <-
+    df %>%
+    left_join(zerocross, by = c("frame", "bodyparts"))
+  
+  t0tail <-
+    df %>%
+    ungroup() %>%
+    filter(bodyparts == "tailtip" &
+             zerocross != 0) %>%
+    select(t0, freqbody) %>%
+    mutate(phtail = seq(from = 0, length.out = n())/2)
+
+  df %>%
+    ungroup() %>%
+    mutate(freq = approx(t0tail$t0, t0tail$freqbody, t)$y,
+           phase = approx(t0tail$t0, t0tail$phtail, t)$y,
+           cycle = floor(phase*2) / 2)
+}
+
+get_amplitudes <- function(df) {
+  df %>%
+    group_by(bodyparts, cycle) %>%
+    mutate(amp = max(abs(exc)))
+}

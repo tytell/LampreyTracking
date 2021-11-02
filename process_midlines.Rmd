@@ -119,6 +119,42 @@ data1 %>%
 ```
 
 ```{r}
+data1 <- 
+  data1 %>% get_cycles()
+```
+
+```{r}
+data1
+```
+
+```{r}
+data1 %>%
+  filter(bodyparts %in% c("tailtip", "anus", "snout")) %>%
+  group_by(bodyparts) %>%
+  plot_ly(x = ~phase, y = ~exc, color = ~bodyparts, type ="scatter", mode = "lines") %>%
+  add_lines(y = ~cycle)
+```
+
+```{r}
+q %>%
+  filter(bodyparts == "tailtip") %>%
+  filter(zerocross != 0) %>%
+```
+
+```{r}
+data1 %>%
+  filter(bodyparts == "tailtip") %>%
+  mutate(zerocross = sign(lead(exc)) != sign(exc),
+         excn = lead(exc)) %>%
+  filter(zerocross) %>%
+  mutate(t0 = t + (1/fps)/(excn - exc) * (0-exc),
+         per = t0-lag(t0),
+         freq = 1/per) %>%
+  select(t,t0,exc,excn, per,freq)
+  
+```
+
+```{r}
 data1 %>%
   group_by(frame) %>%
   mutate(dx = lead(xmm) - xmm,
