@@ -1,0 +1,226 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(tidyverse)
+# library(signal)
+library(plotly)
+```
+
+```{r}
+source('process_midlines.R')
+```
+
+```{r}
+datadir <- '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data'
+scalefile <- '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/scales.csv'
+```
+
+```{r}
+testfile = '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/Exp_062921/Exp_062921/Animal1/2dpi/063021_A1V08_04DLC_resnet50_LesionsOct13shuffle1_1030000.csv'
+```
+
+```{r}
+treatments = c("Control", "2hpi", "1dpi", "2dpi", "3dpi")
+```
+
+```{r}
+fps = 60
+```
+
+```{r}
+widthdata <- read_csv('/Users/etytel01/Box/Katz lamprey kinematics/2021/fishwidth.csv')
+```
+
+```{r}
+scales <- read_csv(scalefile, col_types = list(Date = col_date("%m/%d/%y"),
+                                               Animal = col_character(),
+                                               Treatment = col_factor(levels = treatments)))
+scales
+```
+
+```{r}
+process_filepath <- function(filepath) {
+  df <- str_match(filepath, 'Animal(\\d)/(Control|\\d[dh]pi)/(\\d{6})')
+  colnames(df) <- c("all", "Animal", "Treatment", "Date")
+  df %>%
+    as_tibble() %>%
+    mutate(Date = lubridate::mdy(Date),
+           Treatment = factor(Treatment, levels = treatments)) %>%
+    select(-all)
+}
+```
+
+```{r}
+process_filepath(testfile)
+```
+
+```{r}
+data1 <- read_csv(testfile)
+```
+```{r}
+data1 <-
+  bind_cols(data1, process_filepath(testfile)) %>%
+  left_join(scales, by = c('Animal', 'Treatment', 'Date')) %>%
+  mutate(t = frame / fps,
+         xmm = x * Scale,
+         ymm = y * Scale)
+
+```
+
+```{r}
+data1 %>%
+  filter(frame >= 10 & frame <= 20) %>%
+  group_by(frame) %>%
+  plot_ly(x = ~xmm, y = ~ymm, type = "scatter", mode = "lines")
+```
+
+```{r}
+data1 <- get_arc_length(data1)
+len1 <- get_length(data1)
+```
+
+```{r}
+data1 <- interpolate_width(data1, widthdata = widthdata$ammowidth)
+data1
+```
+
+```{r}
+data1 <-
+  get_center_of_mass(data1)
+
+data1 %>%
+  filter(frame >= 10 & frame <= 20) %>%
+  group_by(frame) %>%
+  plot_ly(x = ~xmm, y = ~ymm, type = "scatter", mode = "lines") %>%
+  add_markers(x = ~comx, y = ~comy)
+```
+
+```{r}
+data1 <-
+  get_swim_vel_dir(data1, fps = fps)
+```
+
+```{r}
+data1 <-
+  data1 %>%
+  get_excursions()
+```
+
+
+```{r}
+data1 %>%
+  filter(bodyparts %in% c("snout", "tailtip")) %>%
+  group_by(bodyparts) %>%
+  plot_ly(x = ~t, y = ~exc, color = ~bodyparts, type = "scatter", mode = "lines")
+  
+```
+
+```{r}
+data1 %>%
+  group_by(frame) %>%
+  mutate(dx = lead(xmm) - xmm,
+         dy = lead(ymm) - ymm) %>%
+  summarize(len = sum(sqrt(dx^2 + dy^2), na.rm = TRUE),
+            t = first(t)) %>%
+  plot_ly(x = ~t, y = ~len, type = "scatter", mode = "points")
+
+```
+
+```{r}
+bf = signal::butter(5, 1.5 / (0.5 * fps), type = "low", plane = "z")
+```
+
+```{r}
+smooth_filter <- function(filt, x) {
+  nfilt = length(filt$a)
+  
+  xs <- numeric(length(x))
+  good <- !is.na(x)
+
+  xs[!good] <- NA
+  xs[good] = signal::filtfilt(filt, x[good])
+
+  xs[1:(2*nfilt)] <- NA
+  xs[(length(xs)-2*nfilt):length(xs)] <- NA
+  
+  xs
+}
+```
+
+```{r}
+```
+
+```{r}
+data1 <-
+  data1 %>%
+  group_by(frame) %>%
+  mutate(dx = lead(xmm) - xmm,
+         dy = lead(ymm) - ymm,
+         s = cumsum(sqrt(dx^2 + dy^2)),
+         s = replace_na(lag(s), 0))
+```
+
+```{r}
+data1 %>%
+  group_by(frame) %>%
+  mutate(width = widthfun(s/len))
+```
+
+```{r}
+data1 %>%
+  filter(bodyparts == "snout") %>%
+  mutate(swimvelx = (lead(xmm) - lag(xmm)) * fps / 2,
+         swimvely = lead(ymm) - lag(ymm) * fps / 2,
+         swimvel = sqrt(swimvelx^2 + swimvely^2),
+         swimvels = smooth_spline_fish(t, swimvel, 0.8)) %>%
+  plot_ly(x = ~t, y = ~swimvel, type = "scatter", mode = "lines+markers") %>%
+  add_lines(y = ~swimvels)
+  
+```
+
+```{r}
+data1
+```
+
+```{r}
+get_excursions <- function(df, s = 0.8, widthfun = widthfun) {
+  df <-
+    df %>%
+    mutate(dx = lead(xmm) - xmm,
+           dy = lead(ymm) - ymm,
+           s = cumsum(sqrt(dx^2 + dy^2)),
+           s = replace_na(lag(s), 0))
+
+  len <-
+    df %>%
+    group_by(frame) %>%
+    summarize(len = sum(sqrt(dx^2 + dy^2), na.rm = TRUE)) %>%
+    summarize(len = median(len), na.rm = TRUE) %>%
+    pull(len)
+    
+  # swim <-
+  #   df %>%
+  #   filter(bodyparts == "snout") %>%
+  #   mutate(swimvelx = (lead(xmm) - lag(xmm)) * fps / 2,
+  #          swimvely = lead(ymm) - lag(ymm) * fps / 2,
+  #          swimvel = sqrt(swimvelx^2 + swimvely^2),
+  #          swimvelxs = smooth_spline_fish(t, swimvelx, s),
+  #          swimvelys = smooth_spline_fish(t, swimvely, s),
+  #          swimvels = sqrt(swimvelxs^2 + swimvelys^2),
+  #          swimdirx = swimvelxs / swimvels,
+  #          swimdiry = swimvelys / swimvels) %>%
+  #   select(frame, swimvel, swimdirx, swimdiry)
+  # 
+  # df %>%
+  #   left_join(swim, by = "frame") %>%
+  #   mutate(exc = )
+}
+```
+
+```{r}
+get_excursions(data1)
+```
+
