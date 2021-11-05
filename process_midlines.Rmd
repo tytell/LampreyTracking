@@ -164,6 +164,16 @@ data1 %>%
 
 ```{r}
 data1 %>%
+  get_wavelength() %>%
+  group_by(bodyparts, bodypartord) %>%
+  summarize(wavelength = mean(wavelength, na.rm = TRUE)) %>%
+  ungroup() %>%
+  plot_ly(x = ~bodyparts, y = ~wavelength, type = "scatter", mode = "lines+markers")
+  
+```
+
+```{r}
+data1 %>%
   filter(zerocross != 0) %>%
   arrange(bodyparts)
 ```
