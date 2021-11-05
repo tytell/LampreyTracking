@@ -7,6 +7,7 @@ output: html_notebook
 library(tidyverse)
 # library(signal)
 library(plotly)
+library(patchwork)
 ```
 
 ```{r}
@@ -155,7 +156,6 @@ data1 %>%
 ```{r}
 data1 %>%
   get_wavespeed() %>%
-  mutate(wavespeed = (snextseg - s)/(t0next - t0)) %>%
   group_by(bodyparts, bodypartord) %>%
   summarize(wavespeed = mean(wavespeed, na.rm = TRUE)) %>%
   ungroup() %>%
@@ -219,25 +219,73 @@ get_next_level <- function(fct) {
 data1 %>%
   get_wavespeed()
 ```
-
 ```{r}
-data1 %>%
-  filter()
+testfile2 = '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/Exp_062921/Exp_062921/Animal1/2hpi/062921_A1V14_04DLC_resnet50_LesionsOct13shuffle1_1030000.csv'
 ```
 
 ```{r}
-q %>%
-  group_by(bodyparts) %>%
-  mutate()
-  #filter(bodyparts %in% c("mid3", "tailbase")) %>%
-  group_by(bodyparts) %>%
-  plot_ly(x = ~bodyphase, y = ~exc, color = ~bodyparts, type = "scatter", mode = "lines")
+load_katz_data <- function(filename, widthdata, fps, bodypartorder) {
+  read_csv(filename) %>%
+    bind_cols(process_filepath(filename)) %>%
+    left_join(scales, by = c('Animal', 'Treatment', 'Date')) %>%
+    mutate(t = frame / fps,
+           xmm = x * Scale,
+           ymm = y * Scale,
+           bodyparts = factor(bodyparts, levels = bodypartorder),
+           bodypartord = as.numeric(bodyparts)) %>%
+    get_all_kinematics(widthdata = widthdata, fps = fps)
+}
 ```
 
 ```{r}
-data1 %>%
-  group_by(cycle, bodyparts) %>%
-  summarize(t0 = first(na.omit(t0)),
-            s = first(s))
+data2 <-
+  load_katz_data(testfile2, 
+                 widthdata = widthdata$ammowidth, fps = fps,
+                 bodypartorder = bodypartorder)
+```
+
+```{r}
+p1 <- ggplot(data2, aes(x = t, y = swimvel)) +
+  geom_line()
+
+p2 <- 
+  data2[seq(1,nrow(data2),30),] %>%
+  ggplot(aes(x = t, y = 1, angle = atan2(swimdiry, swimdirx), radius = 0.05)) +
+  geom_spoke() +
+  coord_fixed()
+
+p3 <-
+  data2 %>%
+  group_by(frame,t) %>%
+  summarize(wavespeed = mean(wavespeed, na.rm = TRUE)) %>%
+  ggplot(aes(x = t, y = wavespeed)) +
+  geom_point()
+
+p4 <-
+  data2 %>%
+  group_by(frame,t) %>%
+  summarize(wavelength = last(na.omit(wavelength))) %>%
+  ggplot(aes(x = t, y = wavelength)) +
+  geom_point()
+
+p5 <-
+  data2 %>%
+  group_by(bodyparts, bodypartord) %>%
+  summarize(amp = mean(amp, na.rm = TRUE),
+            s = mean(s, na.rm = TRUE)) %>%
+  ggplot(aes(x = s, y = amp)) +
+  geom_line()
+  #geom_point(aes(color = bodyparts))
+
+p6 <-
+  data2 %>%
+  group_by(bodyparts, bodypartord) %>%
+  summarize(wavelength = mean(wavelength, na.rm = TRUE),
+            s = mean(s, na.rm = TRUE)) %>%
+  ggplot(aes(x = s, y = wavelength)) +
+  geom_line()
+  #geom_point(aes(color = bodyparts))
+
+p1 + p3 + p4 + p5 + p6
 ```
 

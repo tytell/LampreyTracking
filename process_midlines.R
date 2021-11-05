@@ -220,16 +220,16 @@ get_wavespeed <- function(df) {
     
     # for this segment, save the time of the next zero crossing
     # as a new column
-    t0seg1 <- data1 %>%
+    t0seg1 <- df %>%
       ungroup() %>%
       filter(bodyparts == seg1 & !is.na(t0)) %>%
       arrange(t0) %>%
       mutate(t0next = lead(t0)) %>%
-      select(bodyparts, t0, t0next, zerocross)
+      select(bodyparts, s, t0, t0next, zerocross)
     
     # for the next segment, save the arc length of the segment and
     # the times of the zero crossings
-    t0seg2 = data1 %>%
+    t0seg2 = df %>%
       ungroup() %>%
       filter(bodyparts == seg2 & !is.na(t0)) %>%
       select(bodyparts, s, t0, zerocross)
@@ -256,7 +256,8 @@ get_wavespeed <- function(df) {
     
     # also save the name of the next segment
     t0seg1$nextseg = seg2
-    t0seg[[i]] = t0seg1
+    t0seg[[i]] <- t0seg1 %>%
+      mutate(wavespeed = (snextseg - s)/(t0next - t0))
   }
   
   # stack all of the zero crossing data
@@ -264,7 +265,7 @@ get_wavespeed <- function(df) {
   
   # and merge it in with the main data set
   df %>%
-    left_join(t0seg, by = c("bodyparts", "t0", "zerocross"))
+    left_join(t0seg, by = c("bodyparts", "t0", "zerocross", "s"))
 }
 
 get_wavelength <- function(df) {
@@ -299,4 +300,18 @@ get_wavelength <- function(df) {
   
   df %>%
     left_join(nodes, by = c("frame", "bodyparts"))
+}
+
+get_all_kinematics <- function(df,
+                               widthdata, fps) {
+  df %>%
+    get_arc_length() %>%
+    interpolate_width(widthdata) %>%
+    get_center_of_mass() %>%
+    get_swim_vel_dir(fps = fps) %>%
+    get_excursions() %>%
+    get_cycles() %>%
+    get_amplitudes() %>%
+    get_wavespeed() %>%
+    get_wavelength()
 }
