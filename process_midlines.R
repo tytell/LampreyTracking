@@ -123,6 +123,13 @@ get_cycles <- function(df) {
     select(t0, freqbody) %>%
     mutate(phtail = seq(from = 0, length.out = n())/2)
 
+  t0body <-
+    df %>%
+    ungroup() %>%
+    filter(zerocross != 0 &
+             bodyparts != "tailtip") %>%
+    group_by(bodyparts) %>%
+    mutate()
   df %>%
     ungroup() %>%
     mutate(freq = approx(t0tail$t0, t0tail$freqbody, t)$y,
@@ -131,7 +138,84 @@ get_cycles <- function(df) {
 }
 
 get_amplitudes <- function(df) {
-  df %>%
+  amps <-
+    df %>%
     group_by(bodyparts, cycle) %>%
-    mutate(amp = max(abs(exc)))
+    summarize(ampframe = frame[which.max(abs(exc))],
+              amp = max(abs(exc))) %>%
+    mutate(amp = (lag(amp) + 2*amp + lead(amp)) / 4) %>%
+    ungroup()
+  
+  left_join(df, amps, by = c("bodyparts", "cycle", "frame" = "ampframe"))
+}
+
+get_next_level <- function(fct) {
+  lev <- levels(fct)
+  n = as.numeric(fct) + 1
+  
+  good = (n >= 1) & (n <= length(lev))
+  n[!good] = 1
+  
+  nextfct <- factor(lev[n], levels = lev)
+  nextfct[!good] = NA
+  nextfct
+}
+
+get_next_t0 <- function(a,b, sgn, nextdf) {
+  nextt0 <- 
+    nextdf %>%
+    filter((t0 >= a) & (t0 < b) & (zerocross == sgn)) %>%
+    transmute(t0nextseg = t0,
+           snextseg = s)
+  
+  if (nrow(nextt0) == 0) {
+    nextt0 = data.frame(t0nextseg = NA, snextseg = NA)
+  }
+  nextt0[1,]
+}
+
+get_wavespeed <- function(df) {
+  bodyparts <- levels(df$bodyparts)
+  bodyparts <- factor(bodyparts, levels = bodyparts)
+
+  t0seg = list()
+  for (i in seq(length.out = length(bodyparts)-1)) {
+    seg1 <- bodyparts[i]
+    
+    seg2 = get_next_level(seg1)
+    
+    t0seg1 <- data1 %>%
+      ungroup() %>%
+      filter(bodyparts == seg1 & !is.na(t0)) %>%
+      arrange(t0) %>%
+      mutate(t0next = lead(t0)) %>%
+      select(bodyparts, t0, t0next, zerocross)
+    
+    t0seg2 = data1 %>%
+      ungroup() %>%
+      filter(bodyparts == seg2 & !is.na(t0)) %>%
+      select(bodyparts, s, t0, zerocross)
+    
+    t0seg1$t0nextseg <- NA
+    t0seg1$snextseg <- NA
+    for (r in seq(length.out = nrow(t0seg1))) {
+        nextt0 <- 
+          t0seg2 %>%
+          filter((t0 >= t0seg1$t0[r]) & (t0 < t0seg1$t0next[r]) & (zerocross == t0seg1$zerocross[r])) %>%
+          transmute(t0nextseg = t0,
+                    snextseg = s) %>%
+          filter(!is.na(t0nextseg))
+      
+      t0seg1$t0nextseg[r] <- pull(nextt0, t0nextseg) %>% first()
+      t0seg1$snextseg[r] <- pull(nextt0, snextseg) %>% first()
+    }
+    
+    t0seg1$nextseg = seg2
+    t0seg[[i]] = t0seg1
+  }
+  
+  t0seg <- bind_rows(t0seg)
+  
+  df %>%
+    left_join(t0seg, by = c("bodyparts", "t0", "zerocross"))
 }

@@ -61,12 +61,18 @@ process_filepath(testfile)
 data1 <- read_csv(testfile)
 ```
 ```{r}
+bodypartorder = c("snout", "gill", "mid1", "mid2", "anus", "mid4", "tailbase", "tailtip")
+```
+
+```{r}
 data1 <-
   bind_cols(data1, process_filepath(testfile)) %>%
   left_join(scales, by = c('Animal', 'Treatment', 'Date')) %>%
   mutate(t = frame / fps,
          xmm = x * Scale,
-         ymm = y * Scale)
+         ymm = y * Scale,
+         bodyparts = factor(bodyparts, levels = bodypartorder),
+         bodypartord = as.numeric(bodyparts))
 
 ```
 
@@ -136,127 +142,92 @@ data1 %>%
 ```
 
 ```{r}
-q %>%
-  filter(bodyparts == "tailtip") %>%
-  filter(zerocross != 0) %>%
-```
-
-```{r}
 data1 %>%
-  filter(bodyparts == "tailtip") %>%
-  mutate(zerocross = sign(lead(exc)) != sign(exc),
-         excn = lead(exc)) %>%
-  filter(zerocross) %>%
-  mutate(t0 = t + (1/fps)/(excn - exc) * (0-exc),
-         per = t0-lag(t0),
-         freq = 1/per) %>%
-  select(t,t0,exc,excn, per,freq)
-  
-```
-
-```{r}
-data1 %>%
-  group_by(frame) %>%
-  mutate(dx = lead(xmm) - xmm,
-         dy = lead(ymm) - ymm) %>%
-  summarize(len = sum(sqrt(dx^2 + dy^2), na.rm = TRUE),
+  get_amplitudes() %>%
+  group_by(bodypartord, cycle) %>%
+  summarize(amp = first(na.omit(amp)),
             t = first(t)) %>%
-  plot_ly(x = ~t, y = ~len, type = "scatter", mode = "points")
-
+  summarize(amp = mean(amp, na.rm = TRUE)) %>%
+  ungroup() %>%
+  plot_ly(x = ~bodypartord, y = ~amp, type = "scatter", mode = "lines+markers")
 ```
 
 ```{r}
-bf = signal::butter(5, 1.5 / (0.5 * fps), type = "low", plane = "z")
+data1 %>%
+  get_wavespeed() %>%
+  mutate(wavespeed = (snextseg - s)/(t0next - t0)) %>%
+  group_by(bodyparts, bodypartord) %>%
+  summarize(wavespeed = mean(wavespeed, na.rm = TRUE)) %>%
+  ungroup() %>%
+  plot_ly(x = ~bodypartord, y = ~wavespeed, type = "scatter", mode = "lines+markers")
 ```
 
 ```{r}
-smooth_filter <- function(filt, x) {
-  nfilt = length(filt$a)
-  
-  xs <- numeric(length(x))
-  good <- !is.na(x)
-
-  xs[!good] <- NA
-  xs[good] = signal::filtfilt(filt, x[good])
-
-  xs[1:(2*nfilt)] <- NA
-  xs[(length(xs)-2*nfilt):length(xs)] <- NA
-  
-  xs
-}
+data1 %>%
+  filter(zerocross != 0) %>%
+  arrange(bodyparts)
 ```
 
 ```{r}
-```
-
-```{r}
-data1 <-
+phbody <-
   data1 %>%
-  group_by(frame) %>%
-  mutate(dx = lead(xmm) - xmm,
-         dy = lead(ymm) - ymm,
-         s = cumsum(sqrt(dx^2 + dy^2)),
-         s = replace_na(lag(s), 0))
+    ungroup() %>%
+    filter(zerocross != 0 &
+             bodyparts != "tailtip") %>%
+    group_by(bodyparts) %>%
+    mutate(dt = lead(t0) - t0,
+           dfr = lead(frame) - frame,
+           phstep = 0.5/dfr) %>%
+  select(bodyparts, frame, phstep)
+
+
+q <- data1 %>%
+  left_join(phbody, by = c("bodyparts", "frame")) %>%
+  group_by(bodyparts) %>%
+  fill(phstep, .direction = "down") %>%
+  mutate(phstep = if_else(is.na(phstep), 0, phstep),
+    bodyphase = cumsum(phstep)) %>%
+  arrange(bodyparts, frame)
 ```
 
 ```{r}
-data1 %>%
-  group_by(frame) %>%
-  mutate(width = widthfun(s/len))
-```
-
-```{r}
-data1 %>%
-  filter(bodyparts == "snout") %>%
-  mutate(swimvelx = (lead(xmm) - lag(xmm)) * fps / 2,
-         swimvely = lead(ymm) - lag(ymm) * fps / 2,
-         swimvel = sqrt(swimvelx^2 + swimvely^2),
-         swimvels = smooth_spline_fish(t, swimvel, 0.8)) %>%
-  plot_ly(x = ~t, y = ~swimvel, type = "scatter", mode = "lines+markers") %>%
-  add_lines(y = ~swimvels)
+get_next_level <- function(fct) {
+  lev <- levels(fct)
+  n = as.numeric(fct) + 1
   
-```
-
-```{r}
-data1
-```
-
-```{r}
-get_excursions <- function(df, s = 0.8, widthfun = widthfun) {
-  df <-
-    df %>%
-    mutate(dx = lead(xmm) - xmm,
-           dy = lead(ymm) - ymm,
-           s = cumsum(sqrt(dx^2 + dy^2)),
-           s = replace_na(lag(s), 0))
-
-  len <-
-    df %>%
-    group_by(frame) %>%
-    summarize(len = sum(sqrt(dx^2 + dy^2), na.rm = TRUE)) %>%
-    summarize(len = median(len), na.rm = TRUE) %>%
-    pull(len)
-    
-  # swim <-
-  #   df %>%
-  #   filter(bodyparts == "snout") %>%
-  #   mutate(swimvelx = (lead(xmm) - lag(xmm)) * fps / 2,
-  #          swimvely = lead(ymm) - lag(ymm) * fps / 2,
-  #          swimvel = sqrt(swimvelx^2 + swimvely^2),
-  #          swimvelxs = smooth_spline_fish(t, swimvelx, s),
-  #          swimvelys = smooth_spline_fish(t, swimvely, s),
-  #          swimvels = sqrt(swimvelxs^2 + swimvelys^2),
-  #          swimdirx = swimvelxs / swimvels,
-  #          swimdiry = swimvelys / swimvels) %>%
-  #   select(frame, swimvel, swimdirx, swimdiry)
-  # 
-  # df %>%
-  #   left_join(swim, by = "frame") %>%
-  #   mutate(exc = )
+  good = (n >= 1) & (n <= length(lev))
+  n[!good] = 1
+  
+  nextfct <- factor(lev[n], levels = lev)
+  nextfct[!good] = NA
+  nextfct
 }
 ```
 
+
 ```{r}
-get_excursions(data1)
+data1 %>%
+  get_wavespeed()
+```
+
+```{r}
+data1 %>%
+  filter()
+```
+
+```{r}
+q %>%
+  group_by(bodyparts) %>%
+  mutate()
+  #filter(bodyparts %in% c("mid3", "tailbase")) %>%
+  group_by(bodyparts) %>%
+  plot_ly(x = ~bodyphase, y = ~exc, color = ~bodyparts, type = "scatter", mode = "lines")
+```
+
+```{r}
+data1 %>%
+  group_by(cycle, bodyparts) %>%
+  summarize(t0 = first(na.omit(t0)),
+            s = first(s))
 ```
 
