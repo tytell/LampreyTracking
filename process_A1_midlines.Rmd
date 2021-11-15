@@ -135,24 +135,9 @@ data <-
   select(-(dx:wavelength)) %>%
    filter(goodpointorder & goodlength) %>%
   group_by(filename) %>%
-  group_modify(~ get_all_kinematics(.x, widthdata = widthdata$ammowidth, fps = fps))
+  group_modify(~ get_all_kinematics(.x, widthdata = widthdata$ammowidth))
 write_csv(data, file.path(boxdir,'2021/Processed Data/A1data-goodframes.csv'))
 ```
-
-```{r}
-data %>%
-  ungroup() %>%
-  select(-(dx:wavelength)) %>%
-  filter(goodpointorder & goodlength) %>%
-  filter(trial == '062921_A1V3_02') %>%
-  get_arc_length() %>%
-  interpolate_width(widthdata$ammowidth) %>%
-  get_center_of_mass() %>%
-  get_swim_vel_dir() %>%
-  plot_ly(x = ~t, y = ~swimvelx, type = 'scatter', mode = 'markers')
-    # get_swim_vel_dir()
-```
-
 
 
 # Plot kinematics
@@ -166,8 +151,44 @@ data <- read_csv(file.path(boxdir,'2021/Processed Data/A1data-goodframes.csv'),
 
 ```{r}
 data %>%
-  filter(trial == '062921_A1V3_02') %>%
   plot_ly(x = ~t, y = ~swimvel, color = ~trial, type = 'scatter', mode = 'lines') %>%
   layout(showlegend = FALSE)
+```
+
+```{r}
+data %>%
+  group_by(trial, frame) %>%
+  summarize(across(c(freq,swimvel,Treatment), first)) %>%
+  plot_ly(x = ~freq, y = ~swimvel, color = ~trial, type = 'scatter', mode = 'markers',
+          hovertemplate = '%{swimvel}') %>%
+  layout(showlegend = FALSE)
+```
+
+```{r}
+data %>%
+  filter(trial == '070221_A1V03_03') %>%
+  group_by(trial, frame) %>%
+  #summarize(across(c(freq,swimvel,comx,comy,t,Treatment), first)) %>%
+  # filter(bodyparts == 'tailtip') %>%
+  plot_ly(x = ~xmm, y = ~ymm, type = 'scatter', mode = 'lines')
+```
+
+```{r}
+data %>%
+  filter(trial == '070221_A1V03_03') %>%
+  group_by(bodyparts) %>%
+  mutate(
+    excs = smooth_com_spline(t, exc, 0.3), 
+    peak = case_when((excs > lag(excs)) & (excs > lead(excs))   ~  1,
+                          (excs < lag(excs)) & (excs < lead(excs))   ~  -1,
+                          TRUE   ~  0)) %>%
+  filter(bodyparts == 'tailtip') %>%
+  plot_ly(x = ~t, y = ~excs, color = ~factor(peak), group=1, type = 'scatter', mode = 'lines+markers')
+```
+
+```{r}
+data %>%
+  filter(trial == '070221_A1V03_03') %>%
+  get_cycles()
 ```
 
