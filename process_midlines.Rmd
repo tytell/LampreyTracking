@@ -8,31 +8,42 @@ library(tidyverse)
 # library(signal)
 library(plotly)
 library(patchwork)
+library(ggbeeswarm)
 ```
 
+This is a script with the kinematics processing code.
 ```{r}
 source('process_midlines.R')
 ```
 
+Directory where all the tracked data files are stored.
 ```{r}
 datadir <- '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data'
-scalefile <- '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/scales.csv'
 ```
 
-```{r}
-testfile = '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/Exp_062921/Exp_062921/Animal1/2dpi/063021_A1V08_04DLC_resnet50_LesionsOct13shuffle1_1030000.csv'
-```
-
+Names of the treatments.
 ```{r}
 treatments = c("Control", "2hpi", "1dpi", "2dpi", "3dpi")
 ```
 
+Body parts are named in DeepLabCut, but they have an order along the body, given here.
+```{r}
+bodypartorder = c("snout", "gill", "mid1", "mid2", "anus", "mid4", "tailbase", "tailtip")
+```
+
+Filming speed (frames per second)
 ```{r}
 fps = 60
 ```
 
+Load in approximate widthdata for ammocoetes, which we'll use for locating the center of mass.
 ```{r}
 widthdata <- read_csv('/Users/etytel01/Box/Katz lamprey kinematics/2021/fishwidth.csv')
+```
+
+Digitized scales for each day of filming.
+```{r}
+scalefile <- '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/scales.csv'
 ```
 
 ```{r}
@@ -42,29 +53,21 @@ scales <- read_csv(scalefile, col_types = list(Date = col_date("%m/%d/%y"),
 scales
 ```
 
+# Test on one file
 ```{r}
-process_filepath <- function(filepath) {
-  df <- str_match(filepath, 'Animal(\\d)/(Control|\\d[dh]pi)/(\\d{6})')
-  colnames(df) <- c("all", "Animal", "Treatment", "Date")
-  df %>%
-    as_tibble() %>%
-    mutate(Date = lubridate::mdy(Date),
-           Treatment = factor(Treatment, levels = treatments)) %>%
-    select(-all)
-}
+testfile = '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/Exp_062921/Exp_062921/Animal1/2dpi/063021_A1V08_04DLC_resnet50_LesionsOct13shuffle1_1030000.csv'
 ```
 
 ```{r}
 process_filepath(testfile)
 ```
 
+Load in the data.
 ```{r}
 data1 <- read_csv(testfile)
 ```
-```{r}
-bodypartorder = c("snout", "gill", "mid1", "mid2", "anus", "mid4", "tailbase", "tailtip")
-```
 
+And add in the scale data to get positions in mm and time in seconds.
 ```{r}
 data1 <-
   bind_cols(data1, process_filepath(testfile)) %>%
@@ -77,23 +80,18 @@ data1 <-
 
 ```
 
-```{r}
-data1 %>%
-  filter(frame >= 10 & frame <= 20) %>%
-  group_by(frame) %>%
-  plot_ly(x = ~xmm, y = ~ymm, type = "scatter", mode = "lines")
-```
-
+Pull out the arc length and then estimate the median length.
 ```{r}
 data1 <- get_arc_length(data1)
-len1 <- get_length(data1)
+len1 <- get_median_length(data1)
 ```
 
+Use that to interpolate the width.
 ```{r}
 data1 <- interpolate_width(data1, widthdata = widthdata$ammowidth)
 data1
 ```
-
+Now estimate center of mass and plot it to make sure it makes sense.
 ```{r}
 data1 <-
   get_center_of_mass(data1)
@@ -104,12 +102,13 @@ data1 %>%
   plot_ly(x = ~xmm, y = ~ymm, type = "scatter", mode = "lines") %>%
   add_markers(x = ~comx, y = ~comy)
 ```
-
+Estimate swimming velocity and direction.
 ```{r}
 data1 <-
   get_swim_vel_dir(data1, fps = fps)
 ```
 
+Then get the excursion of the body relative to the swimming direction.
 ```{r}
 data1 <-
   data1 %>%
@@ -117,14 +116,18 @@ data1 <-
 ```
 
 
+Plot the excursions of the snout and tail base and tip to check.
 ```{r}
 data1 %>%
-  filter(bodyparts %in% c("snout", "tailtip")) %>%
+  filter(bodyparts %in% c("snout", "tailbase", "tailtip")) %>%
   group_by(bodyparts) %>%
   plot_ly(x = ~t, y = ~exc, color = ~bodyparts, type = "scatter", mode = "lines")
   
 ```
 
+## Phase analysis
+
+Get cycles between zero crossings of the excursions
 ```{r}
 data1 <- 
   data1 %>% get_cycles()
@@ -133,7 +136,7 @@ data1 <-
 ```{r}
 data1
 ```
-
+The cycle plot should increase by 1 each time the tail crosses zero excursion.
 ```{r}
 data1 %>%
   filter(bodyparts %in% c("tailtip", "anus", "snout")) %>%
@@ -141,7 +144,9 @@ data1 %>%
   plot_ly(x = ~phase, y = ~exc, color = ~bodyparts, type ="scatter", mode = "lines") %>%
   add_lines(y = ~cycle)
 ```
+## Amplitude
 
+This should show the mean amplitude as a function of position along the body.
 ```{r}
 data1 %>%
   get_amplitudes() %>%
@@ -153,6 +158,9 @@ data1 %>%
   plot_ly(x = ~bodypartord, y = ~amp, type = "scatter", mode = "lines+markers")
 ```
 
+## Wave speed
+
+And the wave speed as a function of position.
 ```{r}
 data1 %>%
   get_wavespeed() %>%
@@ -161,7 +169,11 @@ data1 %>%
   ungroup() %>%
   plot_ly(x = ~bodypartord, y = ~wavespeed, type = "scatter", mode = "lines+markers")
 ```
+Usually I assume that wavespeed is constant along the body, but here it appears to be decreasing toward the tail. Could be that the wavelength is growing along the body.
 
+## Wavelength
+
+Estimate the wavelength.
 ```{r}
 data1 %>%
   get_wavelength() %>%
@@ -171,79 +183,23 @@ data1 %>%
   plot_ly(x = ~bodyparts, y = ~wavelength, type = "scatter", mode = "lines+markers")
   
 ```
-
-```{r}
-data1 %>%
-  filter(zerocross != 0) %>%
-  arrange(bodyparts)
-```
-
-```{r}
-phbody <-
-  data1 %>%
-    ungroup() %>%
-    filter(zerocross != 0 &
-             bodyparts != "tailtip") %>%
-    group_by(bodyparts) %>%
-    mutate(dt = lead(t0) - t0,
-           dfr = lead(frame) - frame,
-           phstep = 0.5/dfr) %>%
-  select(bodyparts, frame, phstep)
+It's pretty constant along the body where we can measure it, which is mostly the anterior body.
 
 
-q <- data1 %>%
-  left_join(phbody, by = c("bodyparts", "frame")) %>%
-  group_by(bodyparts) %>%
-  fill(phstep, .direction = "down") %>%
-  mutate(phstep = if_else(is.na(phstep), 0, phstep),
-    bodyphase = cumsum(phstep)) %>%
-  arrange(bodyparts, frame)
-```
+# Test on a second file
 
-```{r}
-get_next_level <- function(fct) {
-  lev <- levels(fct)
-  n = as.numeric(fct) + 1
-  
-  good = (n >= 1) & (n <= length(lev))
-  n[!good] = 1
-  
-  nextfct <- factor(lev[n], levels = lev)
-  nextfct[!good] = NA
-  nextfct
-}
-```
-
-
-```{r}
-data1 %>%
-  get_wavespeed()
-```
 ```{r}
 testfile2 = '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/Exp_062921/Exp_062921/Animal1/2hpi/062921_A1V14_04DLC_resnet50_LesionsOct13shuffle1_1030000.csv'
-```
-
-```{r}
-load_katz_data <- function(filename, widthdata, fps, bodypartorder) {
-  read_csv(filename) %>%
-    bind_cols(process_filepath(filename)) %>%
-    left_join(scales, by = c('Animal', 'Treatment', 'Date')) %>%
-    mutate(t = frame / fps,
-           xmm = x * Scale,
-           ymm = y * Scale,
-           bodyparts = factor(bodyparts, levels = bodypartorder),
-           bodypartord = as.numeric(bodyparts)) %>%
-    get_all_kinematics(widthdata = widthdata, fps = fps)
-}
 ```
 
 ```{r}
 data2 <-
   load_katz_data(testfile2, 
                  widthdata = widthdata$ammowidth, fps = fps,
-                 bodypartorder = bodypartorder)
+                 bodypartorder = bodypartorder) %>%
+  get_all_kinematics(widthdata = widthdata$ammowidth, fps = fps)
 ```
-
+Summary plot
 ```{r}
 p1 <- ggplot(data2, aes(x = t, y = swimvel)) +
   geom_line()
@@ -287,5 +243,199 @@ p6 <-
   #geom_point(aes(color = bodyparts))
 
 p1 + p3 + p4 + p5 + p6
+```
+
+# Load many files
+
+```{r}
+datafilenames <- list.files(datadir, pattern='*.csv', full.names = TRUE, recursive = TRUE)
+datafilenames <- datafilenames[str_detect(datafilenames, 'shuffle1')]
+```
+
+```{r}
+datafilenames <- datafilenames[str_detect(datafilenames, 'A1')]
+```
+
+```{r eval = FALSE}
+#options(error = recover)
+A1data <- purrr::map_dfr(datafilenames[1:5], ~ load_katz_data(.x, widthdata = widthdata$ammowidth, fps = fps,
+                 bodypartorder = bodypartorder, showfile = TRUE))
+#write_csv(A1data, '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/A1data.csv')
+```
+
+```{r}
+A1data <-
+  A1data %>%
+  group_by(filename) %>%
+  group_modify(~ get_all_kinematics(.x, widthdata = widthdata$ammowidth, fps = fps))
+```
+
+```{r}
+A1data <- read_csv('/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data/A1data.csv')
+```
+
+Pull out the median length of each animal across all of the trials.
+```{r}
+animallengths <-
+  A1data %>%
+  group_by(Animal, trial, frame) %>%
+  summarize(len = last(s)) %>%
+  ungroup() %>%
+  group_by(Animal) %>%
+  summarize(len = median(len, na.rm = TRUE))
+```
+
+And merge it back into the main data set.
+```{r}
+A1data <-
+  left_join(A1data, animallengths, by = "Animal")
+```
+
+```{r}
+A1data <-
+  A1data %>%
+  group_by(trial, frame, t) %>%
+  mutate(lenfr = last(s)) %>%
+  ungroup()
+```
+
+```{r}
+A1data %>%
+    group_by(trial, frame, t) %>%
+    summarize(lenfr = last(lenfr)) %>%
+  plot_ly(x = ~trial, y = ~lenfr, color = ~trial, type="box",
+          showlegend = FALSE)
+```
+
+```{r}
+
+```
+
+```{r}
+testtrial <-
+  A1data %>%
+  filter(trial == '062921_A1V16_02')
+```
+
+```{r}
+testtrialbyframe <-
+  testtrial %>%
+  group_by(frame,t) %>%
+  summarize(across(c(comx,comy, swimvel, s), ~last(.x)))
+
+p1 <- testtrialbyframe %>%
+  ggplot(aes(x = t, y = swimvel)) +
+  geom_line()
+p2 <- testtrialbyframe %>%
+  ggplot(aes(x = t, y = s)) +
+  geom_line()
+
+p1 + p2
+```
+
+```{r}
+testtrial %>%
+  group_by(frame) %>%
+  plot_ly(x = ~xmm, y = ~ymm, frame = ~frame, type = "scatter", mode = "lines") %>%
+  add_markers(color = ~-log10(likelihood))
+```
+
+
+```{r}
+badtrials <-
+  A1data %>%
+  group_by(trial, frame) %>%
+  summarize(lenfr = last(lenfr),
+            len = last(len),
+            lenerror = abs(lenfr - len)/len) %>%
+  summarize(lenerror_mn = mean(lenerror, na.rm = TRUE),
+    nbad = sum(lenerror > 0.1),
+            badtrial = nbad > 10)
+
+badtrials
+```
+
+```{r}
+goodtrials <-
+  badtrials %>%
+  filter(!badtrial) %>%
+  pull(trial)
+
+goodtrials
+```
+
+```{r}
+A1data <-
+  A1data %>%
+  filter(trial %in% goodtrials)
+```
+
+```{r}
+p1 <- ggplot(A1data, aes(x = t, y = swimvel, color = trial)) +
+  geom_line() +
+  theme(legend.position = 'none')
+
+p1
+```
+
+```{r}
+summary_kinematics_plot <- function(df) {
+  p1 <- ggplot(df, aes(x = t, y = swimvel, color = trial)) +
+    geom_line()
+  
+  p2 <-
+    df %>%
+    group_by(trial, frame,t) %>%
+    summarize(wavespeed = mean(wavespeed, na.rm = TRUE)) %>%
+    ggplot(aes(x = t, y = wavespeed, color = trial)) +
+    geom_point()
+  
+  p3 <-
+    df %>%
+    group_by(trial, frame,t) %>%
+    summarize(wavespeed = mean(wavespeed, na.rm = TRUE),
+              swimvel = first(swimvel)) %>%
+    ggplot(aes(x = swimvel, y = wavespeed, color = trial)) +
+    geom_point()
+
+  p6 <-
+    df %>%
+    group_by(trial, frame,t) %>%
+    summarize(wavelength = last(na.omit(wavelength))) %>%
+    ggplot(aes(x = t, y = wavelength, color = trial)) +
+    geom_point()
+  
+  p4 <-
+    df %>%
+    group_by(trial, bodyparts, bodypartord) %>%
+    summarize(amp = mean(amp, na.rm = TRUE),
+              s = mean(s, na.rm = TRUE)) %>%
+    ggplot(aes(x = s, y = amp, color = trial)) +
+    geom_line()
+  #geom_point(aes(color = bodyparts))
+  
+  p5 <-
+    df %>%
+    group_by(trial, bodyparts, bodypartord) %>%
+    summarize(wavelength = mean(wavelength, na.rm = TRUE),
+              s = mean(s, na.rm = TRUE)) %>%
+    ggplot(aes(x = s, y = wavelength, color = trial)) +
+    geom_line()
+  #geom_point(aes(color = bodyparts))
+  
+  p1 + p2 + p3 + p4 + p5 + p6 +  plot_layout(guides = 'none')
+}
+```
+
+```{r}
+summary_kinematics_plot(A1data)
+```
+
+```{r}
+A1data %>%
+  group_by(Treatment) %>%
+  ggplot(aes(x = Treatment, y = swimvel)) +
+  geom_violin() +
+  stat_summary(fun.data = "mean_sdl")
 ```
 
