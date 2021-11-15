@@ -1,10 +1,37 @@
 require(tidyverse)
 
+process_filepath <- function(filepath) {
+  df <- str_match(filepath, 'Animal(\\d)/(Control|\\d[dh]pi)/(\\d{6})')
+  colnames(df) <- c("all", "Animal", "Treatment", "Date")
+  df %>%
+    as_tibble() %>%
+    mutate(Date = lubridate::mdy(Date),
+           Treatment = factor(Treatment, levels = treatments)) %>%
+    select(-all)
+}
+
+load_katz_data <- function(filename, widthdata, fps, bodypartorder, showfile=FALSE) {
+  if (showfile) {
+    print(basename(filename))
+  }
+  df <- read_csv(filename, show_col_types = FALSE) %>%
+    bind_cols(process_filepath(filename)) %>%
+    left_join(scales, by = c('Animal', 'Treatment', 'Date')) %>%
+    mutate(t = frame / fps,
+           xmm = x * Scale,
+           ymm = y * Scale,
+           bodyparts = factor(bodyparts, levels = bodypartorder),
+           bodypartord = as.numeric(bodyparts),
+           fullpathname = filename,
+           filename = basename(filename),
+           trial = str_extract(filename, '\\d{6}_A\\d+V\\d+_\\d+'))
+}
+
 get_arc_length <- function(df) {
   #' Calculates arc length along the body
   
   df %>%
-    group_by(frame) %>%
+    group_by(frame, .add=TRUE) %>%
     mutate(dx = lead(xmm) - xmm,
            dy = lead(ymm) - ymm,
            s = cumsum(sqrt(dx^2 + dy^2)),
@@ -12,12 +39,12 @@ get_arc_length <- function(df) {
     ungroup()
 }
 
-get_length <- function(df) {
+get_median_length <- function(df) {
   #' Pulls out the last value of arc length in each frame and uses that to
   #' estimate the median body length across all frames
 
   df %>%
-    group_by(frame) %>%
+    group_by(frame, .add=TRUE) %>%
     summarize(len = last(s)) %>%
     summarize(len = median(len)) %>%
     pull(len)
@@ -34,7 +61,7 @@ interpolate_width <- function(df, widthdata) {
   s0 <- pracma::linspace(0, 1, length(widthdata))
   widthfun <- approxfun(s0, widthdata, yleft=0, yright=0)
   
-  len <- get_length(df)
+  len <- get_median_length(df)
   
   df %>%
     mutate(width = widthfun(s/len) * len)
@@ -49,10 +76,11 @@ get_center_of_mass <- function(df) {
   
   com <-
     df %>%
-    group_by(frame) %>%
+    group_by(frame, .add=TRUE) %>%
     summarize(m = pracma::trapz(s, pi*height*width/4),
               comx = pracma::trapz(s, xmm * pi*height*width/4) / m,
-              comy = pracma::trapz(s, ymm * pi*height*width/4) / m)
+              comy = pracma::trapz(s, ymm * pi*height*width/4) / m) %>%
+    ungroup()
   
   df %>%
     left_join(com, by = "frame")
@@ -132,16 +160,17 @@ get_cycles <- function(df) {
   #' overall phase estimate.
   df <-
     df %>%
-    group_by(bodyparts) %>%
+    group_by(bodyparts, .add=TRUE) %>%
     mutate(excn = lead(exc),
            zerocross = case_when(sign(excn) > sign(exc)   ~   1,
                                  sign(excn) == sign(exc)  ~   0,
                                  sign(excn) < sign(exc)   ~   -1,
-                                 TRUE   ~   0))
+                                 TRUE   ~   0)) %>%
+    ungroup(bodyparts)
   
   zerocross <-
     df %>%
-    group_by(bodyparts) %>%
+    group_by(bodyparts, .add=TRUE) %>%
     filter(zerocross != 0) %>%
     mutate(t0 = t + (1/fps)/(excn - exc) * (0-exc),
            per = lead(t0)-lag(t0),
@@ -178,9 +207,9 @@ get_amplitudes <- function(df) {
     group_by(bodyparts, cycle) %>%
     summarize(ampframe = frame[which.max(abs(exc))],
               amp = max(abs(exc))) %>%
-    mutate(amp = (lag(amp) + 2*amp + lead(amp)) / 4) %>%
-    ungroup()
-  
+    ungroup() %>%
+    mutate(amp = (lag(amp) + 2*amp + lead(amp)) / 4)
+
   left_join(df, amps, by = c("bodyparts", "cycle", "frame" = "ampframe"))
 }
 
@@ -303,15 +332,38 @@ get_wavelength <- function(df) {
 }
 
 get_all_kinematics <- function(df,
-                               widthdata, fps) {
+                               widthdata) {
   df %>%
     get_arc_length() %>%
     interpolate_width(widthdata) %>%
     get_center_of_mass() %>%
-    get_swim_vel_dir(fps = fps) %>%
+    get_swim_vel_dir() %>%
     get_excursions() %>%
     get_cycles() %>%
     get_amplitudes() %>%
     get_wavespeed() %>%
     get_wavelength()
+}
+
+get_point_order <- function(df) {
+  df %>%
+    group_by(trial, frame) %>%
+    group_modify(~ get_point_order_in_frame(.x))
+}
+
+get_point_order_in_frame <- function(df) {
+  xy <- select(df, xmm, ymm)
+  D <- dist(xy)
+  D <- as.matrix(D)
+  
+  n <- dim(D)[1]
+  ind <- rep(NA_integer_, n)
+  for (i in seq_len(n-1)) {
+    d1 <- D[(i+1):n,i]
+    ind[i] = which.min(d1) + i
+  }
+  
+  df$nextpoint <- ind
+  
+  df
 }
