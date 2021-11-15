@@ -104,7 +104,7 @@ smooth_com_spline <- function(t,com, spar) {
   coms
 }
 
-get_swim_vel_dir <- function(df, s = 0.8, fps = 60) {
+get_swim_vel_dir <- function(df, s = 0.8) {
   #' Computes the swimming velocity and a smoothed swimming direction vector.
   #' The swimming direction vector is used later on for calculating amplitudes
   #' and excursions.
@@ -115,14 +115,12 @@ get_swim_vel_dir <- function(df, s = 0.8, fps = 60) {
   
   swim <-
     df %>%
-    group_by(frame) %>%
+    group_by(frame, .add=TRUE) %>%
     # COM has one location per frame, but we have multiple body positions, so we
     # just take the first value
-    summarize(comx = first(comx),
-              comy = first(comy),
-              t = first(t)) %>%
-    mutate(swimvelx = (lead(comx) - lag(comx)) * fps / 2,   # central difference derivative
-           swimvely = (lead(comy) - lag(comy)) * fps / 2,
+    summarize(across(c(comx, comy, t), first)) %>%
+    mutate(swimvelx = 0.5 * ((lead(comx) - comx) / (lead(t) - t) + (comx - lag(comx)) / (t - lag(t))),   # central difference derivative
+           swimvely = 0.5 * ((lead(comy) - comy) / (lead(t) - t) + (comy - lag(comy)) / (t - lag(t))),
            swimvel = sqrt(swimvelx^2 + swimvely^2),  # magnitude is speed
            swimvelxs = smooth_com_spline(t, swimvelx, s),    # smooth the COM x location
            swimvelys = smooth_com_spline(t, swimvely, s),
