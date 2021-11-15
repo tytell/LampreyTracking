@@ -1,0 +1,173 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(tidyverse)
+# library(signal)
+library(plotly)
+library(patchwork)
+library(ggbeeswarm)
+```
+
+This is a script with the kinematics processing code.
+```{r}
+source('process_midlines.R')
+```
+
+Directory where all the tracked data files are stored.
+```{r}
+boxdir <- '/Users/etytel01/Box/Katz lamprey kinematics/'
+datadir <- file.path(boxdir,'2021/Processed Data')
+```
+
+Names of the treatments.
+```{r}
+treatments = c("Control", "2hpi", "1dpi", "2dpi", "3dpi")
+```
+
+Body parts are named in DeepLabCut, but they have an order along the body, given here.
+```{r}
+bodypartorder = c("snout", "gill", "mid1", "mid2", "anus", "mid4", "tailbase", "tailtip")
+```
+
+Filming speed (frames per second)
+```{r}
+fps = 60
+```
+
+Load in approximate widthdata for ammocoetes, which we'll use for locating the center of mass.
+```{r}
+widthdata <- read_csv(file.path(boxdir,'2021/fishwidth.csv'))
+```
+
+Digitized scales for each day of filming.
+```{r}
+scalefile <- file.path(boxdir,'2021/Processed Data/scales.csv')
+```
+
+```{r}
+scales <- read_csv(scalefile, col_types = list(Date = col_date("%m/%d/%y"),
+                                               Animal = col_character(),
+                                               Treatment = col_factor(levels = treatments)))
+scales
+```
+
+# Load the DeepLabCut data and process it
+
+```{r}
+datafilenames <- list.files(datadir, pattern='*.csv', full.names = TRUE, recursive = TRUE)
+datafilenames <- datafilenames[str_detect(datafilenames, 'shuffle1')]
+```
+
+```{r}
+datafilenames <- datafilenames[str_detect(datafilenames, 'A1')]
+```
+
+## Load and process the data
+
+Note that these chunks don't run by default, since they take a long time.
+
+```{r eval = FALSE}
+#options(error = recover)
+data <- purrr::map_dfr(datafilenames, ~ load_katz_data(.x, widthdata = widthdata$ammowidth, fps = fps,
+                 bodypartorder = bodypartorder, showfile = TRUE))
+write_csv(data, file.path(boxdir,'Processed Data/A1data.csv')
+```
+
+This loads the previous processed data file, as produced above.
+```{r}
+data <- read_csv(file.path(boxdir,'2021/Processed Data/A1data.csv'))
+```
+
+## Look for bad frames
+
+Look for variation in length
+```{r}
+animallengths <-
+  data %>%
+  get_arc_length() %>%
+  group_by(Animal, trial, frame) %>%
+  summarize(lenfr = last(s)) %>%
+  ungroup() %>%
+  group_by(Animal) %>%
+  mutate(len = median(lenfr)) %>%
+  ungroup()
+```
+
+```{r}
+data <-
+  data %>%
+  left_join(animallengths, by = c("Animal","trial","frame"))
+```
+
+This also takes a long time
+```{r eval=FALSE}
+data <-
+  data %>%
+  get_point_order()
+write_csv(data, file.path(boxdir,'2021/Processed Data/A1data.csv'))
+```
+
+```{r}
+data <- read_csv(file.path(boxdir,'2021/Processed Data/A1data.csv'), 
+                 col_types = list(Animal = col_character(),
+                                  Treatment = col_factor(levels = treatments),
+                                  bodyparts = col_factor(levels = bodypartorder)))
+```
+
+```{r}
+data <-
+  data %>%
+  group_by(trial, frame) %>%
+  mutate(pointorder = seq_len(n())) %>%
+  mutate(goodpointorder = all(nextpoint == pointorder+1, na.rm=TRUE),
+            goodlength = all(abs(lenfr - len) / len < 0.1))
+```
+
+## Process the kinematics for the good frames
+
+```{r eval = FALSE}
+data <-
+  data %>%
+  ungroup() %>%
+  select(-(dx:wavelength)) %>%
+   filter(goodpointorder & goodlength) %>%
+  group_by(filename) %>%
+  group_modify(~ get_all_kinematics(.x, widthdata = widthdata$ammowidth, fps = fps))
+write_csv(data, file.path(boxdir,'2021/Processed Data/A1data-goodframes.csv'))
+```
+
+```{r}
+data %>%
+  ungroup() %>%
+  select(-(dx:wavelength)) %>%
+  filter(goodpointorder & goodlength) %>%
+  filter(trial == '062921_A1V3_02') %>%
+  get_arc_length() %>%
+  interpolate_width(widthdata$ammowidth) %>%
+  get_center_of_mass() %>%
+  get_swim_vel_dir() %>%
+  plot_ly(x = ~t, y = ~swimvelx, type = 'scatter', mode = 'markers')
+    # get_swim_vel_dir()
+```
+
+
+
+# Plot kinematics
+
+```{r}
+data <- read_csv(file.path(boxdir,'2021/Processed Data/A1data-goodframes.csv'),
+                 col_types = list(Date = col_date(), 
+                                  Animal = col_character(),
+                                  Treatment = col_factor(levels = treatments)))
+```
+
+```{r}
+data %>%
+  filter(trial == '062921_A1V3_02') %>%
+  plot_ly(x = ~t, y = ~swimvel, color = ~trial, type = 'scatter', mode = 'lines') %>%
+  layout(showlegend = FALSE)
+```
+
