@@ -86,7 +86,7 @@ get_center_of_mass <- function(df) {
     left_join(com, by = "frame")
 }
 
-smooth_com_spline <- function(t,com, spar) {
+smooth_point_spline <- function(t,com, spar) {
   #' Smooths the center of mass location using a smoothing spline
   #' 
   #' @param t Time
@@ -110,7 +110,7 @@ get_swim_vel_dir <- function(df, s = 0.8) {
   #' and excursions.
   #' 
   #' @param df Data frame
-  #' @param s Smoothing parameter. Seems to work will around 0.8
+  #' @param s Smoothing parameter. Seems to work well around 0.8
   #' @param fps Frames per second
   
   swim <-
@@ -122,8 +122,8 @@ get_swim_vel_dir <- function(df, s = 0.8) {
     mutate(swimvelx = 0.5 * ((lead(comx) - comx) / (lead(t) - t) + (comx - lag(comx)) / (t - lag(t))),   # central difference derivative
            swimvely = 0.5 * ((lead(comy) - comy) / (lead(t) - t) + (comy - lag(comy)) / (t - lag(t))),
            swimvel = sqrt(swimvelx^2 + swimvely^2),  # magnitude is speed
-           swimvelxs = smooth_com_spline(t, swimvelx, s),    # smooth the COM x location
-           swimvelys = smooth_com_spline(t, swimvely, s),
+           swimvelxs = smooth_point_spline(t, swimvelx, s),    # smooth the COM x location
+           swimvelys = smooth_point_spline(t, swimvely, s),
            swimvels = sqrt(swimvelxs^2 + swimvelys^2),
            swimdirx = swimvelxs / swimvels,   # make a normal vector corresponding to the swimming direction
            swimdiry = swimvelys / swimvels) %>%
@@ -144,7 +144,15 @@ get_excursions <- function(df) {
              (ymm - comy) * swimdirx)
 }
 
-get_cycles <- function(df) {
+get_exc_peaks <- function(df, s = 0.2) {
+  df %>%
+    mutate(excs = smooth_point_spline(t, exc, s),
+           peak = case_when((excs > lag(excs)) & (excs > lead(excs))   ~  1,
+                            (excs < lag(excs)) & (excs < lead(excs))   ~  -1,
+                            TRUE   ~  0))
+    
+}
+get_cycles <- function(df, smooth.excursion = 0.2) {
   #' Uses the time series for lateral excursion to find the cycle periods
   #' 
   #' For each body segment, it looks for where the excursion crosses the swimming
@@ -159,7 +167,11 @@ get_cycles <- function(df) {
   df <-
     df %>%
     group_by(bodyparts, .add=TRUE) %>%
-    mutate(excn = lead(exc),
+    mutate(excs = smooth_point_spline(t, exc, smooth.excursion),
+           peak = case_when((excs > lag(excs)) & (excs > lead(excs))   ~  1,
+                            (excs < lag(excs)) & (excs < lead(excs))   ~  -1,
+                            TRUE   ~  0),
+           excn = lead(exc),
            zerocross = case_when(sign(excn) > sign(exc)   ~   1,
                                  sign(excn) == sign(exc)  ~   0,
                                  sign(excn) < sign(exc)   ~   -1,
@@ -187,11 +199,30 @@ get_cycles <- function(df) {
     select(t0, freqbody) %>%
     mutate(phtail = seq(from = 0, length.out = n())/2)
 
-  df %>%
-    ungroup() %>%
-    mutate(freq = approx(t0tail$t0, t0tail$freqbody, t)$y,
-           phase = approx(t0tail$t0, t0tail$phtail, t)$y,
-           cycle = floor(phase*2) / 2)
+  if (sum(!is.na(t0tail$freqbody)) < 2) {
+    df <-
+      df %>%
+      ungroup() %>%
+      mutate(freq = NA_real_,
+             phase = NA_real_,
+             cycle = NA_real_)
+    
+    trial1 <- df %>%
+      distinct(trial) %>%
+      slice_head(n = 1) %>%
+      pull(trial)
+    
+    warning(sprintf('Cannot estimate frequency in trial %s', trial1))
+  }
+  else {
+    df <- 
+      df %>%
+      ungroup() %>%
+      mutate(freq = approx(t0tail$t0, t0tail$freqbody, t)$y,
+             phase = approx(t0tail$t0, t0tail$phtail, t)$y,
+             cycle = floor(phase*2) / 2)
+  }
+  df
 }
 
 get_amplitudes <- function(df) {
@@ -331,6 +362,12 @@ get_wavelength <- function(df) {
 
 get_all_kinematics <- function(df,
                                widthdata) {
+  df %>%
+    distinct(trial) %>%
+    slice_head(n = 1) %>%
+    pull(trial) %>%
+    print()
+  
   df %>%
     get_arc_length() %>%
     interpolate_width(widthdata) %>%
