@@ -177,6 +177,38 @@ get_cycles <- function(df, smooth.excursion = 0.2) {
                                  sign(excn) < sign(exc)   ~   -1,
                                  TRUE   ~   0)) %>%
     ungroup(bodyparts)
+
+  # formula from https://stackoverflow.com/questions/717762/how-to-calculate-the-vertex-of-a-parabola-given-three-points   
+  df <-
+    df %>%
+    group_by(bodyparts) %>%
+    arrange(t) %>%
+    mutate(denom = (lag(t) - t) * (lag(t) - lead(t)) * (t - lead(t)),
+           A = (lead(t) * (excs - lag(excs)) + t * (lag(excs) - lead(excs)) + lag(t) * (lead(excs) - excs)) / denom,
+           B = (lead(t)^2 * (lag(excs) - excs) + t^2 * (lead(excs) - lag(excs)) + lag(t)^2 * (excs - lead(excs))) / denom,
+           tp = -B / (2*A),
+           tp = if_else(peak != 0, tp, NA_real_),
+           t0 = if_else(zerocross != 0,
+                        t + (1/(lead(t) - t)) / (lead(excs) - exc) * (0-exc),
+                        NA_real_))
+  
+  cycleorder <-
+    df %>%
+    group_by(bodyparts, .add=TRUE) %>%
+    filter((peak != 0) | (zerocross != 0)) %>%
+    mutate(cycle_step = case_when(zerocross == 1  ~  'up',
+                                  peak == 1  ~  'max',
+                                  zerocross == -1  ~  'down',
+                                  peak == -1  ~  'min'),
+           cycle_step = factor(cycle_step, levels = c('up', 'max', 'down', 'min')),
+           tph = case_when(peak != 0  ~  tp,
+                           zerocross != 0  ~  t0)) %>%
+    arrange(frame) %>%
+    mutate(cycle_num = cumsum(as.integer(lead(cycle_step)) < as.integer(cycle_step)))
+
+  cycleorder <-
+    cycleorder %>%
+    complete(bodyparts, cycle_num, cycle_step)
   
   zerocross <-
     df %>%
