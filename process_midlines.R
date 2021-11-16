@@ -152,7 +152,8 @@ get_exc_peaks <- function(df, s = 0.2) {
                             TRUE   ~  0))
     
 }
-get_cycles <- function(df, smooth.excursion = 0.2) {
+get_cycles <- function(df, smooth.excursion = 0.2,
+                       min.peak.gap = 0.01) {
   #' Uses the time series for lateral excursion to find the cycle periods
   #' 
   #' For each body segment, it looks for where the excursion crosses the swimming
@@ -164,6 +165,8 @@ get_cycles <- function(df, smooth.excursion = 0.2) {
   #' 
   #' Finally, estimates a cycle phase for for the tail, which we use as an
   #' overall phase estimate.
+  
+  # first smooth the excursion, then look for peaks and zerocrossings
   df <-
     df %>%
     group_by(bodyparts, .add=TRUE) %>%
@@ -171,89 +174,113 @@ get_cycles <- function(df, smooth.excursion = 0.2) {
            peak = case_when((excs > lag(excs)) & (excs > lead(excs))   ~  1,
                             (excs < lag(excs)) & (excs < lead(excs))   ~  -1,
                             TRUE   ~  0),
-           excn = lead(exc),
-           zerocross = case_when(sign(excn) > sign(exc)   ~   1,
-                                 sign(excn) == sign(exc)  ~   0,
-                                 sign(excn) < sign(exc)   ~   -1,
+           zerocross = case_when(sign(lead(exc)) > sign(exc)   ~   1,
+                                 sign(lead(exc)) < sign(exc)   ~   -1,
                                  TRUE   ~   0)) %>%
-    ungroup(bodyparts)
+    ungroup()
 
+  # now interpolate the exact time of the peaks and the zero crossings
+  # assume the peak is a parabola
   # formula from https://stackoverflow.com/questions/717762/how-to-calculate-the-vertex-of-a-parabola-given-three-points   
+  # assuming the zero crossing is a line
   df <-
     df %>%
+    ungroup() %>%
+    arrange(bodyparts, t) %>%
     group_by(bodyparts) %>%
-    arrange(t) %>%
-    mutate(denom = (lag(t) - t) * (lag(t) - lead(t)) * (t - lead(t)),
-           A = (lead(t) * (excs - lag(excs)) + t * (lag(excs) - lead(excs)) + lag(t) * (lead(excs) - excs)) / denom,
-           B = (lead(t)^2 * (lag(excs) - excs) + t^2 * (lead(excs) - lag(excs)) + lag(t)^2 * (excs - lead(excs))) / denom,
+    mutate(denom = if_else(peak != 0, 
+                           (lag(t) - t) * (lag(t) - lead(t)) * (t - lead(t)), 
+                           NA_real_),
+           A = if_else(peak != 0, 
+                       (lead(t) * (excs - lag(excs)) + t * (lag(excs) - lead(excs)) + lag(t) * (lead(excs) - excs)) / denom, 
+                       NA_real_),
+           B = if_else(peak != 0,
+                       (lead(t)^2 * (lag(excs) - excs) + t^2 * (lead(excs) - lag(excs)) + lag(t)^2 * (excs - lead(excs))) / denom,
+                       NA_real_),
            tp = -B / (2*A),
-           tp = if_else(peak != 0, tp, NA_real_),
            t0 = if_else(zerocross != 0,
-                        t + (1/(lead(t) - t)) / (lead(excs) - exc) * (0-exc),
-                        NA_real_))
+                        t + (lead(t) - t) / (lead(excs) - excs) * (0-excs),
+                        NA_real_)) %>%
+    select(-denom, -A, -B)
   
+  # get rid of peaks that are too close to one another
   cycleorder <-
     df %>%
     group_by(bodyparts, .add=TRUE) %>%
     filter((peak != 0) | (zerocross != 0)) %>%
+    mutate(tp2 = if_else(lead(tp) - tp < min.peak.gap |
+                           tp - lag(tp) < min.peak.gap, NA_real_, tp),
+           tp = tp2) %>%
+    select(-tp2) %>%
+    mutate(peak = if_else(is.na(tp), 0, peak))
+  
+  # identify the step within each cycle and assign them a phase
+  cycleorder <-
+    cycleorder %>%
+    filter((peak != 0) | (zerocross != 0)) %>%
+    group_by(bodyparts, .add=TRUE) %>%
     mutate(cycle_step = case_when(zerocross == 1  ~  'up',
                                   peak == 1  ~  'max',
                                   zerocross == -1  ~  'down',
                                   peak == -1  ~  'min'),
            cycle_step = factor(cycle_step, levels = c('up', 'max', 'down', 'min')),
            tph = case_when(peak != 0  ~  tp,
-                           zerocross != 0  ~  t0)) %>%
-    arrange(frame) %>%
-    mutate(cycle_num = cumsum(as.integer(lead(cycle_step)) < as.integer(cycle_step)))
-
+                           zerocross != 0  ~  t0),
+           ph1 = case_when(cycle_step == 'up'  ~  0,
+                           cycle_step == 'max'  ~  0.25,
+                           cycle_step == 'down'  ~  0.5,
+                           cycle_step == 'min'  ~  0.75)) 
+  
+  # identify cycles. A cycle is defined as any time the phase steps backward. Each time it does
+  # that, we increment the cycle number.
   cycleorder <-
     cycleorder %>%
-    complete(bodyparts, cycle_num, cycle_step)
-  
-  zerocross <-
-    df %>%
-    group_by(bodyparts, .add=TRUE) %>%
-    filter(zerocross != 0) %>%
-    mutate(t0 = t + (1/fps)/(excn - exc) * (0-exc),
-           per = lead(t0)-lag(t0),
-           freqbody = 1/per) %>%
-    select(bodyparts, frame, t0, per,freqbody)
+    arrange(bodyparts, frame) %>%
+    group_by(bodyparts) %>%
+    mutate(cycle_num_step = as.integer(as.integer(cycle_step) < as.integer(lag(cycle_step))),
+           cycle_num_step = replace_na(cycle_num_step, 0),
+           cycle_num = cumsum(cycle_num_step),
+           ph1 = ph1 + cycle_num) %>%
+    select(bodyparts, frame, cycle_step, tph, cycle_num, ph1)
 
-  df <-
-    df %>%
-    left_join(zerocross, by = c("frame", "bodyparts"))
-  
-  t0tail <-
-    df %>%
-    ungroup() %>%
-    filter(bodyparts == "tailtip" &
-             zerocross != 0) %>%
-    select(t0, freqbody) %>%
-    mutate(phtail = seq(from = 0, length.out = n())/2)
-
-  if (sum(!is.na(t0tail$freqbody)) < 2) {
+  # check and make sure we have at least two defined phases
+  if (sum(!is.na(cycleorder$ph1)) < 2) {
     df <-
       df %>%
       ungroup() %>%
       mutate(freq = NA_real_,
              phase = NA_real_,
              cycle = NA_real_)
-    
-    trial1 <- df %>%
-      distinct(trial) %>%
-      slice_head(n = 1) %>%
-      pull(trial)
-    
-    warning(sprintf('Cannot estimate frequency in trial %s', trial1))
+
+      trial1 <- df %>%
+        distinct(trial) %>%
+        slice_head(n = 1) %>%
+        pull(trial)
+
+      warning(sprintf('Cannot estimate frequency in trial %s', trial1))
   }
   else {
-    df <- 
+    # using a natural smoothing spline to estimate the phase at any time
+    sf_tail <- with(filter(cycleorder, bodyparts == 'tailtip'),
+                    splinefun(tph, ph1, method = 'natural'))
+
+    # estimate phase and frequency (frequency is the first derivative of phase)
+    df <-
       df %>%
       ungroup() %>%
-      mutate(freq = approx(t0tail$t0, t0tail$freqbody, t)$y,
-             phase = approx(t0tail$t0, t0tail$phtail, t)$y,
-             cycle = floor(phase*2) / 2)
+      left_join(cycleorder, by = c("bodyparts", "frame")) %>%
+      mutate(phase = sf_tail(t),
+             freq = sf_tail(t, deriv=1))
+    # don't extrapolate phase
+    df <-
+      df %>%
+      group_by(bodyparts) %>%
+      mutate(phase = if_else((t >= min(tph, na.rm = TRUE)) & (t <= max(tph, na.rm = TRUE)), phase, NA_real_),
+             freq = if_else((t >= min(tph, na.rm = TRUE)) & (t <= max(tph, na.rm = TRUE)), freq, NA_real_),
+             cycle = floor(phase*2) / 2) %>%
+      ungroup()
   }
+  
   df
 }
 
