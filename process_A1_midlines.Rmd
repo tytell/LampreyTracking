@@ -146,7 +146,8 @@ write_csv(data, file.path(boxdir,'2021/Processed Data/A1data-goodframes.csv'))
 data <- read_csv(file.path(boxdir,'2021/Processed Data/A1data-goodframes.csv'),
                  col_types = list(Date = col_date(), 
                                   Animal = col_character(),
-                                  Treatment = col_factor(levels = treatments)))
+                                  Treatment = col_factor(levels = treatments),
+                                  bodyparts = col_factor(levels = bodypartorder)))
 ```
 
 ```{r}
@@ -184,6 +185,136 @@ data %>%
                           TRUE   ~  0)) %>%
   filter(bodyparts == 'tailtip') %>%
   plot_ly(x = ~t, y = ~excs, color = ~factor(peak), group=1, type = 'scatter', mode = 'lines+markers')
+```
+
+```{r}
+df <- data %>%
+  filter(trial == '070221_A1V03_03')
+smooth.excursion <- 0.2
+min.peak.gap <- 0.01
+```
+
+```{r}
+df <-
+  df %>%
+  group_by(bodyparts, .add=TRUE) %>%
+  mutate(excs = smooth_point_spline(t, exc, smooth.excursion),
+         peak = case_when((excs > lag(excs)) & (excs > lead(excs))   ~  1,
+                          (excs < lag(excs)) & (excs < lead(excs))   ~  -1,
+                          TRUE   ~  0),
+         excn = lead(exc),
+         zerocross = case_when(sign(excn) > sign(exc)   ~   1,
+                               sign(excn) == sign(exc)  ~   0,
+                               sign(excn) < sign(exc)   ~   -1,
+                               TRUE   ~   0)) %>%
+  ungroup(bodyparts)
+```
+
+```{r}
+df %>%
+  filter(bodyparts == 'tailtip') %>%
+  group_by(bodyparts) %>%
+  ggplot(aes(x = t, y = excs)) +
+  geom_line() +
+  geom_point(data = filter(df, bodyparts == 'tailtip' & (peak != 0 | zerocross != 0)), aes(x = t, y = excs))
+```
+
+```{r}
+# formula from https://stackoverflow.com/questions/717762/how-to-calculate-the-vertex-of-a-parabola-given-three-points   
+df <-
+  df %>%
+  ungroup() %>%
+  arrange(bodyparts, t) %>%
+  group_by(bodyparts) %>%
+  mutate(denom = if_else(peak != 0, 
+                         (lag(t) - t) * (lag(t) - lead(t)) * (t - lead(t)), 
+                         NA_real_),
+         A = if_else(peak != 0, 
+                     (lead(t) * (excs - lag(excs)) + t * (lag(excs) - lead(excs)) + lag(t) * (lead(excs) - excs)) / denom, 
+                     NA_real_),
+         B = if_else(peak != 0,
+                     (lead(t)^2 * (lag(excs) - excs) + t^2 * (lead(excs) - lag(excs)) + lag(t)^2 * (excs - lead(excs))) / denom,
+                     NA_real_),
+         tp = -B / (2*A),
+         t0 = if_else(zerocross != 0,
+                      t + (lead(t) - t) / (lead(excs) - excs) * (0-excs),
+                      NA_real_))
+```
+
+```{r}
+df %>%
+  filter(bodyparts == 'tailtip') %>%
+  ggplot(aes(x = t, y = excs)) +
+  geom_line() +
+  geom_point(aes(x = t0, y = 0), color='red') +
+  geom_point(aes(x = tp, y = excs), color='blue')
+```
+```{r}
+cycleorder <-
+  df %>%
+  group_by(bodyparts, .add=TRUE) %>%
+  filter((peak != 0) | (zerocross != 0)) %>%
+  mutate(tp2 = if_else(lead(tp) - tp < min.peak.gap |
+                        tp - lag(tp) < min.peak.gap, NA_real_, tp),
+         tp = tp2) %>%
+  select(-tp2) %>%
+  mutate(peak = if_else(is.na(tp), 0, peak))
+```
+
+```{r}
+cycleorder <-
+  cycleorder %>%
+  filter((peak != 0) | (zerocross != 0)) %>%
+  group_by(bodyparts, .add=TRUE) %>%
+  mutate(cycle_step = case_when(zerocross == 1  ~  'up',
+                                peak == 1  ~  'max',
+                                zerocross == -1  ~  'down',
+                                peak == -1  ~  'min'),
+         cycle_step = factor(cycle_step, levels = c('up', 'max', 'down', 'min')),
+         tph = case_when(peak != 0  ~  tp,
+                         zerocross != 0  ~  t0),
+         ph1 = case_when(cycle_step == 'up'  ~  0,
+                         cycle_step == 'max'  ~  0.25,
+                         cycle_step == 'down'  ~  0.5,
+                         cycle_step == 'min'  ~  0.75)) %>%
+  arrange(frame, by_group = TRUE) %>%
+  mutate(cycle_num_step = as.integer(as.integer(cycle_step) < as.integer(lag(cycle_step))),
+         cycle_num_step = replace_na(cycle_num_step, 0),
+         cycle_num = cumsum(cycle_num_step),
+         ph1 = ph1 + cycle_num) %>%
+  select(bodyparts, frame, cycle_step, tph, cycle_num, ph1)
+```
+
+
+```{r}
+sf_tail <- with(filter(cycleorder, bodyparts == 'tailtip'),
+                splinefun(tph, ph1, method = 'natural'))
+
+```
+
+```{r}
+df <-
+  df %>%
+  left_join(cycleorder, by = c("bodyparts", "frame")) %>%
+  mutate(phase = sf_tail(t))
+```
+
+```{r}
+df %>%
+  filter(bodyparts == 'tailtip') %>%
+  ggplot(aes(x = t, y = excs)) +
+  geom_line() +
+  geom_point(aes(x = t0, y = 0), color='red') +
+  geom_point(aes(x = tp, y = excs), color='blue') +
+  geom_line(aes(x = t, y = phase)) +
+  geom_point(data = filter(cycleorder, bodyparts == 'tailtip'), aes(x = t, y = ph1))
+
+```
+```{r}
+data %>%
+  select(-(excn:cycle)) %>%
+  filter(trial == '070221_A1V03_03') %>%
+  get_cycles()
 ```
 
 ```{r}
