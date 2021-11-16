@@ -262,23 +262,20 @@ get_cycles <- function(df, smooth.excursion = 0.2,
   else {
     # using a natural smoothing spline to estimate the phase at any time
     sf_tail <- with(filter(cycleorder, bodyparts == 'tailtip'),
-                    splinefun(tph, ph1, method = 'natural'))
+                    approxfun(tph, ph1, yleft = NA_real_, yright = NA_real_))
 
     # estimate phase and frequency (frequency is the first derivative of phase)
     df <-
       df %>%
       ungroup() %>%
       left_join(cycleorder, by = c("bodyparts", "frame")) %>%
-      mutate(phase = sf_tail(t),
-             freq = sf_tail(t, deriv=1))
-    # don't extrapolate phase
-    df <-
-      df %>%
+      arrange(bodyparts, t) %>%
       group_by(bodyparts) %>%
-      mutate(phase = if_else((t >= min(tph, na.rm = TRUE)) & (t <= max(tph, na.rm = TRUE)), phase, NA_real_),
-             freq = if_else((t >= min(tph, na.rm = TRUE)) & (t <= max(tph, na.rm = TRUE)), freq, NA_real_),
+      mutate(phase = sf_tail(t),
+             freq = (lead(phase) - lag(phase)) / (lead(t) - lag(t)),
              cycle = floor(phase*2) / 2) %>%
       ungroup()
+    
   }
   
   df
