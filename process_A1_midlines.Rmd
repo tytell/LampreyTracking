@@ -9,6 +9,7 @@ library(tidyverse)
 library(plotly)
 library(patchwork)
 library(ggbeeswarm)
+library(hdf5r)
 ```
 
 This is a script with the kinematics processing code.
@@ -157,10 +158,55 @@ data %>%
 ```
 
 ```{r}
-data %>%
+tailbeatdata <-
+  data %>%
+  arrange(trial, frame, bodyparts) %>%
   group_by(trial, frame) %>%
-  summarize(across(c(freq,swimvel,Treatment), first)) %>%
-  plot_ly(x = ~freq, y = ~swimvel, color = ~Treatment, type = 'scatter', mode = 'markers')
+  summarize(across(c(freq,swimvel, Treatment, len, amp, wavespeed, wavelength), ~ last(na.omit(.x))))
+
+```
+
+```{r}
+tailbeatdata %>%
+  ggplot(aes(x = freq, y = swimvel, color = Treatment)) +
+  geom_point() +
+  facet_wrap(~ Treatment)
   # layout(showlegend = FALSE)
+```
+```{r}
+tailbeatdata %>%
+  mutate(stridelen = swimvel/len / freq) %>%
+  ggplot(aes(x = swimvel, y = stridelen, color = Treatment)) +
+  geom_point() +
+  facet_wrap(~Treatment)
+```
+
+```{r}
+tailbeatdata %>%
+  ggplot(aes(x = swimvel, y = amp, color = Treatment)) +
+  geom_point() +
+  facet_wrap(~Treatment)
+```
+```{r}
+tailbeatdata %>%
+  mutate(St = 2*freq*amp / swimvel) %>%
+  ggplot(aes(x = swimvel, y = St, color = Treatment)) +
+  geom_point() +
+  facet_wrap(~Treatment) +
+  ylim(0,1)
+```
+```{r}
+tailbeatdata %>%
+  ggplot(aes(x = swimvel, y = wavespeed, color = Treatment)) +
+  geom_point() +
+  facet_wrap(~Treatment) +
+  ylim(0, 400)
+```
+
+```{r}
+tailbeatdata %>%
+  ggplot(aes(x = swimvel, y = wavelength, color = Treatment)) +
+  geom_point() +
+  facet_wrap(~Treatment)
 ```
 
