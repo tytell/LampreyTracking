@@ -15,6 +15,7 @@ library(hdf5r)
 This is a script with the kinematics processing code.
 ```{r}
 source('process_midlines.R')
+source('check_midlines.R')
 ```
 
 Directory where all the tracked data files are stored.
@@ -72,8 +73,9 @@ Note that these chunks don't run by default, since they take a long time.
 
 ```{r eval = FALSE}
 #options(error = recover)
-data <- purrr::map_dfr(datafilenames, ~ load_katz_data(.x, widthdata = widthdata$ammowidth, fps = fps,
-                 bodypartorder = bodypartorder, showfile = TRUE))
+data <- purrr::map_dfr(datafilenames, ~ load_katz_data(.x, scales = scales,
+                                                       widthdata = widthdata$ammowidth, fps = fps,
+                                                       bodypartorder = bodypartorder, showfile = TRUE))
 
 data <- data %>%
   distinct()
@@ -93,13 +95,27 @@ data <- read_csv(file.path(boxdir,'2021/Processed Data/A2data.csv'),
 head(data)
 ```
 
+```{r}
+data %>%
+  filter(trial == '063021_A2V14_03')
+```
+
+```{r}
+data %>%
+  filter(trial == '063021_A2V14_03') %>%
+  filter((frame >= 50) & (frame <= 70)) %>%
+  ggplot(aes(x = xmm, y = ymm, color = frame)) +
+  geom_path(aes(group = frame))
+```
+
+
 ## Look for bad frames
 
 Look for variation in length
 ```{r}
 animallengths <-
   data %>%
-  arrange(trial, frame, bodyparts) %>%
+  group_by(trial) %>%
   get_arc_length() %>%
   group_by(Animal, trial, frame) %>%
   summarize(lenfr = last(s)) %>%
@@ -107,8 +123,13 @@ animallengths <-
   group_by(Animal) %>%
   mutate(len = median(lenfr)) %>%
   ungroup()
+```
 
-animallengths
+```{r}
+animallengths %>%
+  filter(trial == '063021_A2V14_03') %>%
+  ggplot(aes(x = frame, y = lenfr)) +
+  geom_point()
 ```
 
 ```{r}
@@ -141,14 +162,31 @@ data <-
             goodlength = all(abs(lenfr - len) / len < 0.1))
 ```
 
+```{r}
+data %>%
+  group_by(trial) %>%
+  summarize(pctgoodlength = sum(as.numeric(goodlength), na.rm = TRUE) / n(),
+            pctgoodpointorder = sum(as.numeric(goodpointorder), na.rm = TRUE) / n()) %>%
+  ggplot(aes(x = trial)) +
+  geom_point(aes(y = pctgoodlength)) +
+  geom_point(aes(y = pctgoodpointorder), color = 'red', shape = 5) +
+  theme(axis.text.x = element_blank())
+```
+
 ## Process the kinematics for the good frames
+
+```{r}
+if ('dx' %in% colnames(data)) {
+  data <- data %>%
+    select(-(dx:wavelength))
+}
+```
 
 ```{r eval = FALSE}
 data <-
   data %>%
   ungroup() %>%
-  select(-(dx:wavelength)) %>%
-   filter(goodpointorder & goodlength) %>%
+  filter(goodpointorder & goodlength) %>%
   group_by(filename) %>%
   group_modify(~ get_all_kinematics(.x, widthdata = widthdata$ammowidth))
 write_csv(data, file.path(boxdir,'2021/Processed Data/A2data-goodframes.csv'))
@@ -160,14 +198,21 @@ write_csv(data, file.path(boxdir,'2021/Processed Data/A2data-goodframes.csv'))
 ```{r}
 data <- read_csv(file.path(boxdir,'2021/Processed Data/A2data-goodframes.csv'),
                  col_types = list(Date = col_date(), 
+                                  Date.x = col_date(), 
                                   Animal = col_character(),
                                   Treatment = col_factor(levels = treatments),
                                   bodyparts = col_factor(levels = bodypartorder)))
+
+if ('Date.y' %in% colnames(data)) {
+  data <- data %>%
+    select(-Date.y) %>%
+    rename(Date = Date.x)
+}
 ```
 
 ```{r}
 data %>%
-  plot_ly(x = ~t, y = ~swimvel, color = ~trial, type = 'scatter', mode = 'lines') %>%
+  plot_ly(x = ~t, y = ~swimvels, color = ~trial, type = 'scatter', mode = 'lines') %>%
   layout(showlegend = FALSE)
 ```
 
@@ -176,15 +221,50 @@ tailbeatdata <-
   data %>%
   arrange(trial, frame, bodyparts) %>%
   group_by(trial, frame) %>%
+  dplyr::rename(swimvel0 = swimvel, swimvel = swimvels) %>%
   summarize(across(c(freq,swimvel, Treatment, len, amp, wavespeed, wavelength), ~ last(na.omit(.x))))
 
 ```
 
 ```{r}
+data %>%
+  filter(freq > 10 & Treatment == 'Control') %>%
+  distinct(trial)
+```
+
+```{r}
+q <-data %>%
+  select(-(dx:wavelength)) %>%
+  filter(trial == '062921_A2V8_02') %>%
+  get_all_kinematics(widthdata = widthdata$ammowidth)
+  
+
+q %>% filter(bodyparts == 'tailtip') %>%
+  #group_by(frame) %>%
+  plot_ly(x = ~t, y = ~excs / len, type = 'scatter', mode = 'lines+markers') %>%
+  add_markers(x = ~t, y = ~excs / len, color = ~factor(peak))
+```
+
+```{r}
+q <- 
+  data %>%
+  select(-contains('bodyaxis')) %>%
+  filter(trial == '062921_A2V8_02') %>%
+  get_body_axis() 
+```
+
+```{r}
+q %>%
+  filter(bodyparts == 'tailtip') %>%
+  plot_ly(x = ~t, y = ~bodyaxisxfr, type = 'scatter', mode = 'lines+markers')
+```
+
+```{r}
 tailbeatdata %>%
   ggplot(aes(x = freq, y = swimvel, color = Treatment)) +
-  geom_point() +
-  facet_wrap(~ Treatment)
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ Treatment, scales = 'free')
+  # lims(x = c(0, 20), y = c(0, 400))
   # layout(showlegend = FALSE)
 ```
 ```{r}
@@ -192,7 +272,8 @@ tailbeatdata %>%
   mutate(stridelen = swimvel/len / freq) %>%
   ggplot(aes(x = swimvel, y = stridelen, color = Treatment)) +
   geom_point() +
-  facet_wrap(~Treatment)
+  facet_wrap(~Treatment) +
+  lims(x = c(0, 400), y = c(0, 2))
 ```
 
 ```{r}
