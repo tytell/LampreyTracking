@@ -146,7 +146,7 @@ get_body_axis_in_frame <- function(df) {
   #' Requires `comx` and `comy` to already have been estimated in
   #' the data frame.
   
-  XY <- cbind(df$x - df$comx, df$y - df$comy)
+  XY <- cbind(df$xmm - df$comx, df$ymm - df$comy)
   svdout <- svd(XY)
 
   if (is.list(svdout)) {
@@ -215,16 +215,32 @@ get_excursions <- function(df) {
              (ymm - comy) * bodyaxisx)
 }
 
+unwrap <- function(y, modulus = 2*pi, na.rm = FALSE) {
+  dy <- y - lag(y)
+  dy[1] <- 0
+  
+  if (na.rm) {
+    dy <- replace_na(dy, 0)
+  }
+  
+  step = case_when(dy < -modulus/2  ~  modulus,
+                   dy > modulus/2  ~  -modulus,
+                   TRUE  ~  0)
+  step = cumsum(step)
+  
+  y + step
+}
+
 get_curvature <- function(df) {
   df %>%
     arrange(frame, bodyparts) %>%
     group_by(frame) %>%
-    mutate(segang = atan2(lead(ymm) - ymm, lead(xmm) - xmm),
-           dsegang = segang - lag(segang),
-           curve = dsegang / ((lead(s) - lag(s))/2))
+    mutate(segang = unwrap(atan2(ymm - lag(ymm), xmm - lag(xmm)), na.rm = TRUE),
+           dsegang = lead(segang) - segang,
+           curve = dsegang / ((lead(s) + lag(s))/2))
 }
 
-get_cycles <- function(df, track = 'curvature',
+get_cycles <- function(df, track = 'excursion',
                        include.zeros = FALSE,
                        smooth.excursion = 0.2,
                        min.peak.gap = 0.01,
