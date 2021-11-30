@@ -99,11 +99,13 @@ smooth_point_spline <- function(t,com, spar) {
   coms <- numeric(length(com))
   good <- !is.na(com)
   
-  sp <- smooth.spline(t[good], com[good], spar = spar)
-  
+  if (any(good)) {
+    sp <- smooth.spline(t[good], com[good], spar = spar)
+    
+    coms[good] = predict(sp)$y
+  }  
+
   coms[!good] <- NA
-  coms[good] = predict(sp)$y
-  
   coms
 }
 
@@ -213,15 +215,6 @@ get_excursions <- function(df) {
              (ymm - comy) * bodyaxisx)
 }
 
-get_exc_peaks <- function(df, s = 0.2) {
-  df %>%
-    mutate(excs = smooth_point_spline(t, exc, s),
-           peak = case_when((excs > lag(excs)) & (excs > lead(excs))   ~  1,
-                            (excs < lag(excs)) & (excs < lead(excs))   ~  -1,
-                            TRUE   ~  0))
-    
-}
-
 get_curvature <- function(df) {
   df %>%
     arrange(frame, bodyparts) %>%
@@ -231,10 +224,12 @@ get_curvature <- function(df) {
            curve = dsegang / ((lead(s) - lag(s))/2))
 }
 
-get_cycles <- function(df, smooth.excursion = 0.2,
+get_cycles <- function(df, track = 'curvature',
+                       include.zeros = FALSE,
+                       smooth.excursion = 0.2,
                        min.peak.gap = 0.01,
                        min.peak.size = 0.01) {
-  #' Uses the time series for lateral excursion to find the cycle periods
+  #' Uses the time series for curvature or lateral excursion to find the cycle periods
   #' 
   #' For each body segment, it looks for where the excursion crosses the swimming
   #' direction (a zero crossing). Uses linear interpolation to estimate the actual
@@ -246,13 +241,28 @@ get_cycles <- function(df, smooth.excursion = 0.2,
   #' Finally, estimates a cycle phase for for the tail, which we use as an
   #' overall phase estimate.
   
+  # first check whether we're tracking curvature or excursion
+  if (track == 'curvature') {
+    df <-
+      df %>%
+      mutate(trackvar = curve)
+  }
+  else if (track == 'excursion') {
+    df <-
+      df %>%
+      mutate(trackvar = exc)
+  }
+  else {
+    stop(sprintf('Unknown tracking option %s', track))
+  }
+  
   # first smooth the excursion, then look for peaks and zerocrossings
   df <-
     df %>%
-    group_by(bodyparts, .add=TRUE) %>%
-    mutate(excs = smooth_point_spline(t, exc, smooth.excursion),
-           peak = case_when((excs > lag(excs)) & (excs > lead(excs))   ~  1,
-                            (excs < lag(excs)) & (excs < lead(excs))   ~  -1,
+    group_by(bodyparts) %>%
+    mutate(tracks = smooth_point_spline(t, trackvar, smooth.excursion),
+           peak = case_when((tracks > lag(tracks)) & (tracks > lead(tracks))   ~  1,
+                            (tracks < lag(tracks)) & (tracks < lead(tracks))   ~  -1,
                             TRUE   ~  0),
            zerocross = case_when(sign(lead(exc)) > sign(exc)   ~   1,
                                  sign(lead(exc)) < sign(exc)   ~   -1,
@@ -272,14 +282,14 @@ get_cycles <- function(df, smooth.excursion = 0.2,
                            (lag(t) - t) * (lag(t) - lead(t)) * (t - lead(t)), 
                            NA_real_),
            A = if_else(peak != 0, 
-                       (lead(t) * (excs - lag(excs)) + t * (lag(excs) - lead(excs)) + lag(t) * (lead(excs) - excs)) / denom, 
+                       (lead(t) * (tracks - lag(tracks)) + t * (lag(tracks) - lead(tracks)) + lag(t) * (lead(tracks) - tracks)) / denom, 
                        NA_real_),
            B = if_else(peak != 0,
-                       (lead(t)^2 * (lag(excs) - excs) + t^2 * (lead(excs) - lag(excs)) + lag(t)^2 * (excs - lead(excs))) / denom,
+                       (lead(t)^2 * (lag(tracks) - tracks) + t^2 * (lead(tracks) - lag(tracks)) + lag(t)^2 * (tracks - lead(tracks))) / denom,
                        NA_real_),
            tp = -B / (2*A),
            t0 = if_else(zerocross != 0,
-                        t + (lead(t) - t) / (lead(excs) - excs) * (0-excs),
+                        t + (lead(t) - t) / (lead(tracks) - tracks) * (0-tracks),
                         NA_real_)) %>%
     select(-denom, -A, -B)
   
@@ -341,6 +351,12 @@ get_cycles <- function(df, smooth.excursion = 0.2,
                            cycle_step == 'down'  ~  0.5,
                            cycle_step == 'min'  ~  0.75)) 
   
+  if (!include.zeros) {
+    cycleorder <-
+      cycleorder %>%
+      filter(cycle_step %in% c('min', 'max'))
+  }
+  
   # identify cycles. A cycle is defined as any time the phase steps backward. Each time it does
   # that, we increment the cycle number.
   cycleorder <-
@@ -370,8 +386,14 @@ get_cycles <- function(df, smooth.excursion = 0.2,
       warning(sprintf('Cannot estimate frequency in trial %s', trial1))
   }
   else {
+    if (all(is.na(filter(cycleorder, bodyparts == 'tailtip')$tph))) {
+      tail = 'tailbase'
+    } else {
+      tail = 'tailtip'
+    }
+    
     # using a natural smoothing spline to estimate the phase at any time
-    sf_tail <- with(filter(cycleorder, bodyparts == 'tailtip'),
+    sf_tail <- with(filter(cycleorder, bodyparts == tail),
                     approxfun(tph, ph1, yleft = NA_real_, yright = NA_real_))
 
     # estimate phase and frequency (frequency is the first derivative of phase)
@@ -544,6 +566,7 @@ get_all_kinematics <- function(df,
     get_swim_vel_dir() %>%
     get_body_axis() %>%
     get_excursions() %>%
+    get_curvature() %>%
     get_cycles(smooth.excursion = smooth.excursion,
                min.peak.gap = min.peak.gap,
                min.peak.size = min.peak.size) %>%
