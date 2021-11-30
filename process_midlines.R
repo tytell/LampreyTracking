@@ -10,13 +10,16 @@ process_filepath <- function(filepath) {
     select(-all)
 }
 
-load_katz_data <- function(filename, widthdata, fps, bodypartorder, showfile=FALSE) {
+load_katz_data <- function(filename, scales, widthdata, fps, bodypartorder, showfile=FALSE) {
   if (showfile) {
     print(basename(filename))
   }
+  scales <- scales %>%
+    select(-Date)
+  
   df <- read_csv(filename, show_col_types = FALSE) %>%
     bind_cols(process_filepath(filename)) %>%
-    left_join(scales, by = c('Animal', 'Treatment', 'Date')) %>%
+    left_join(scales, by = c('Animal', 'Treatment')) %>%
     mutate(t = frame / fps,
            xmm = x * Scale,
            ymm = y * Scale,
@@ -134,14 +137,80 @@ get_swim_vel_dir <- function(df, s = 0.8) {
     left_join(swim, by = c("frame"))
 }
 
+get_body_axis_in_frame <- function(df) {
+  #' Gets a central axis for one set of points in a frame.
+  #' 
+  #' Uses `svd` to estimate the central x and y axis.
+  #' Requires `comx` and `comy` to already have been estimated in
+  #' the data frame.
+  
+  XY <- cbind(df$x - df$comx, df$y - df$comy)
+  svdout <- svd(XY)
+
+  if (is.list(svdout)) {
+    df <-
+      df %>%
+      mutate(bodyaxisx = svdout$v[1,1],
+             bodyaxisy = svdout$v[2,1])
+  } else {
+    df <-
+      df %>%
+      mutate(bodyaxisx = NA,
+             bodyaxisy = NA)
+  }
+  df
+}
+
+get_body_axis <- function(df, s = 0.8) {
+  #' Gets the central axis of the body
+  #' 
+  #' Uses `get_body_axis_in_frame` to estimate the central body axis.
+  #' Requires `comx` and `comy` to have already been estimated.
+  #' 
+  #' @param s Smoothing parameter for smoothing body axis fluctuations
+  
+  ax <-
+    df %>%
+    group_by(frame) %>%
+    group_modify(~ get_body_axis_in_frame(.x))
+  
+  ax <-
+    ax %>%
+    group_by(frame) %>%
+    summarize(across(c(t, bodyaxisx, bodyaxisy), first)) %>%
+    mutate(signflip = if_else(bodyaxisx * lag(bodyaxisx) + bodyaxisy * lag(bodyaxisy) < -0.8, -1, 1),
+           signflip = replace_na(signflip, 1))
+  
+  ax <-
+    ax %>%
+    ungroup() %>%
+    mutate(signflip = cumprod(signflip),
+           bodyaxisx = bodyaxisx * signflip,
+           bodyaxisy = bodyaxisy * signflip)
+    
+  ax <-
+    ax %>%
+    mutate(bodyaxisxfr = bodyaxisx,
+           bodyaxisyfr = bodyaxisy,
+           bodyaxisx = smooth_point_spline(t, bodyaxisxfr, s),
+           bodyaxisy = smooth_point_spline(t, bodyaxisyfr, s),
+           bodyaxismag = sqrt(bodyaxisx^2 + bodyaxisy^2),
+           bodyaxisx = bodyaxisx / bodyaxismag,
+           bodyaxisy = bodyaxisy / bodyaxismag) %>%
+    select(-t, -bodyaxismag)
+    
+  df %>%
+    left_join(ax, by = c("frame"))
+}
+
 get_excursions <- function(df) {
   #' Gets lateral excursion of the body, relative to the swimming direction.
   #' 
   #' Projects the position of each body segment, relative to the center of mass, on
   #' to the vector perpendicular to the swimming direction
   df %>%
-    mutate(exc = -(xmm - comx) * swimdiry + 
-             (ymm - comy) * swimdirx)
+    mutate(exc = -(xmm - comx) * bodyaxisy + 
+             (ymm - comy) * bodyaxisx)
 }
 
 get_exc_peaks <- function(df, s = 0.2) {
@@ -152,8 +221,19 @@ get_exc_peaks <- function(df, s = 0.2) {
                             TRUE   ~  0))
     
 }
+
+get_curvature <- function(df) {
+  df %>%
+    arrange(frame, bodyparts) %>%
+    group_by(frame) %>%
+    mutate(segang = atan2(lead(ymm) - ymm, lead(xmm) - xmm),
+           dsegang = segang - lag(segang),
+           curve = dsegang / ((lead(s) - lag(s))/2))
+}
+
 get_cycles <- function(df, smooth.excursion = 0.2,
-                       min.peak.gap = 0.01) {
+                       min.peak.gap = 0.01,
+                       min.peak.size = 0.01) {
   #' Uses the time series for lateral excursion to find the cycle periods
   #' 
   #' For each body segment, it looks for where the excursion crosses the swimming
@@ -203,17 +283,47 @@ get_cycles <- function(df, smooth.excursion = 0.2,
                         NA_real_)) %>%
     select(-denom, -A, -B)
   
-  # get rid of peaks that are too close to one another
+  # get rid of peaks or zeros that are too close to one another
   cycleorder <-
     df %>%
-    group_by(bodyparts, .add=TRUE) %>%
     filter((peak != 0) | (zerocross != 0)) %>%
-    mutate(tp2 = if_else(lead(tp) - tp < min.peak.gap |
-                           tp - lag(tp) < min.peak.gap, NA_real_, tp),
-           tp = tp2) %>%
-    select(-tp2) %>%
+    mutate(cycle_type = case_when(peak != 0  ~  'peak',
+                                  zerocross != 0  ~  'zero')) %>%
+    group_by(bodyparts, cycle_type) %>%
+    mutate(peakgapfwd = lead(tp) - tp,
+           peakgaprev = tp - lag(tp),
+           peakgap = case_when(is.na(peakgapfwd)  ~  peakgaprev,
+                               is.na(peakgaprev)  ~  peakgapfwd,
+                               peakgapfwd < peakgaprev  ~  peakgapfwd,
+                               TRUE  ~  peakgaprev),
+           tp = if_else(peakgap < min.peak.gap, NA_real_, tp))
+  
+  cycleorder <-
+    cycleorder %>%
     mutate(peak = if_else(is.na(tp), 0, peak))
   
+  # also get rid of peaks that are too small
+  cycleorder <-
+    cycleorder %>%
+    filter((peak != 0) | (zerocross != 0)) %>%
+    mutate(cycle_type = case_when(peak != 0  ~  'peak',
+                                  zerocross != 0  ~  'zero')) %>%
+    arrange(bodyparts, cycle_type, frame) %>%
+    group_by(bodyparts, cycle_type) %>%
+    mutate(peaksizerev = abs(exc - lag(exc)),
+           peaksizefwd = abs(exc - lead(exc)),
+           # take the smaller of the forward and backward differences
+           peaksize = case_when(is.na(peaksizerev)  ~  peaksizefwd,
+                                is.na(peaksizefwd)  ~  peaksizerev,
+                                peaksizerev > peaksizefwd  ~  peaksizefwd,
+                                TRUE  ~  peaksizerev),
+           peaksize = if_else(cycle_type == 'zero', NA_real_, peaksize) / len)
+  
+  cycleorder <-
+    cycleorder %>%
+    group_by(bodyparts) %>%
+    mutate(peak = if_else((cycle_type == 'peak') & (peaksize < min.peak.size), 0, peak))    
+
   # identify the step within each cycle and assign them a phase
   cycleorder <-
     cycleorder %>%
@@ -241,7 +351,7 @@ get_cycles <- function(df, smooth.excursion = 0.2,
            cycle_num_step = replace_na(cycle_num_step, 0),
            cycle_num = cumsum(cycle_num_step),
            ph1 = ph1 + cycle_num) %>%
-    select(bodyparts, frame, cycle_step, tph, cycle_num, ph1)
+    select(bodyparts, frame, cycle_step, tph, cycle_num, ph1, peaksize, peakgap)
 
   # check and make sure we have at least two defined phases
   if (sum(!is.na(cycleorder$ph1)) < 2) {
@@ -417,7 +527,10 @@ get_wavelength <- function(df) {
 }
 
 get_all_kinematics <- function(df,
-                               widthdata) {
+                               widthdata,
+                               smooth.excursion = 0.2,
+                               min.peak.gap = 0.01,
+                               min.peak.size = 0.01) {
   df %>%
     distinct(trial) %>%
     slice_head(n = 1) %>%
@@ -429,8 +542,11 @@ get_all_kinematics <- function(df,
     interpolate_width(widthdata) %>%
     get_center_of_mass() %>%
     get_swim_vel_dir() %>%
+    get_body_axis() %>%
     get_excursions() %>%
-    get_cycles() %>%
+    get_cycles(smooth.excursion = smooth.excursion,
+               min.peak.gap = min.peak.gap,
+               min.peak.size = min.peak.size) %>%
     get_amplitudes() %>%
     get_wavespeed() %>%
     get_wavelength()
