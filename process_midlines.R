@@ -215,19 +215,42 @@ get_excursions <- function(df) {
              (ymm - comy) * bodyaxisx)
 }
 
-unwrap <- function(y, modulus = 2*pi, na.rm = FALSE) {
-  dy <- y - lag(y)
-  dy[1] <- 0
+unwrap <- function(y, modulus = 2*pi, jump = 0.5, na.rm = FALSE) {
+  #' Unwraps angle data to remove discontinuities.
+  #' 
+  #' With angle data mod 2pi, the angles can jump discontinuously from
+  #' pi to -pi or -pi to pi. This removes those discontinuities by adding
+  #' or subtracting 2pi when there is a jump.
+  #' 
+  #' @param y Time series angle data.
+  #' @param modulus Modulus of the data. For angle data in radians, use
+  #'    2pi. Could also be 360 for angle data in degrees or 1 for data
+  #'    mod 1.
+  #' @param jump What fraction of the modulus constitutes a jump. Default
+  #'    is 0.5, but you could set it up to 0.9 or more to be stricter.
+  #' @param na.rm Remove NA values before calculating jumps (or not)
   
   if (na.rm) {
-    dy <- replace_na(dy, 0)
+    good = !is.na(y)
+  } else {
+    good = rep_len(TRUE, length(y))
   }
   
-  step = case_when(dy < -modulus/2  ~  modulus,
-                   dy > modulus/2  ~  -modulus,
+  y1 <- y1[good]
+  
+  dy <- y1 - lag(y1)
+  dy[1] <- 0
+  
+  step <- rep_len(0, length(y))
+  
+  # look for the jumps
+  step[good] = case_when(dy < -jump*modulus  ~  modulus,
+                   dy > jmup*modulus  ~  -modulus,
                    TRUE  ~  0)
+  # steps are cumulative, so make sure to add them up
   step = cumsum(step)
   
+  # then add the steps back on to the original data
   y + step
 }
 
