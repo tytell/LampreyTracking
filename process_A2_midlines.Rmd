@@ -233,110 +233,21 @@ tailbeatdata <-
 tailbeatdata %>%
   ggplot(aes(x = freq, y = swimvel, color = Treatment)) +
   geom_point(alpha = 0.5) +
-  facet_wrap(~ Treatment, scales = 'free')
+  facet_wrap(~ Treatment) #, scales = 'free')
   # lims(x = c(0, 20), y = c(0, 400))
   # layout(showlegend = FALSE)
 ```
 
 
-```{r}
-data %>%
-  filter(trial == '062921_A2V10_03') %>%
-  filter(bodyparts == 'tailbase') %>%
-  #group_by(frame) %>%
-  plot_ly(x = ~t, y = ~curves, type = 'scatter', mode = 'lines+markers') %>%
-  add_markers(x = ~t, y = ~curves, color = ~ cycle_step)
-```
-
-```{r}
-q <-data %>%
-  select(-(dx:wavelength)) %>%
-  filter(trial == '062921_A2V10_05') %>%
-  get_arc_length() %>%
-  interpolate_width(widthdata$ammowidth) %>%
-  get_center_of_mass() %>%
-  get_swim_vel_dir() %>%
-  get_body_axis() %>%
-  get_excursions() %>%
-  get_curvature()
-  # get_all_kinematics(widthdata = widthdata$ammowidth,
-  #                    min.peak.gap = 0.01,
-  #                    min.peak.size = 0.02)
-```
-
-```{r}
-q %>%
-  ungroup() %>%
-  #filter(frame == 52) %>%
-  group_by(frame) %>%
-  get_body_axis_in_frame() %>%
-  ggplot(aes(x = xmm, y = ymm, color = frame)) +
-  geom_path(aes(group = frame)) +
-  geom_segment(
-               aes(x = comx, y = comy, xend = comx + len/2 * bodyaxisx, yend = comy + len/2 * bodyaxisy),
-               inherit.aes = FALSE) +
-  coord_fixed()
-```
-
-```{r}
-q %>%
-  filter(frame == 50) %>%
-  select(bodyaxisx, bodyaxisy)
-```
-
-```{r}
-q %>%
-  filter(frame == 50) %>%
-  get_body_axis_in_frame() %>%
-  select(bodyaxisx, bodyaxisy)
-```
-
-```{r}
-q %>%
-  ungroup() %>%
-  #filter(bodyparts == 'tailbase') %>%
-  #pull(curve)
-  plot_ly(x = ~frame, y = ~curve, color = ~bodyparts, type = 'scatter', mode = 'lines+markers')
-```
-
-```{r}
-p1 <- q %>% filter(bodyparts == 'tailbase') %>%
-  #group_by(frame) %>%
-  plot_ly(x = ~t, y = ~tracks, type = 'scatter', mode = 'lines+markers') %>%
-  add_markers(x = ~t, y = ~tracks, color = ~ cycle_step)
-
-p2 <- q %>% filter(bodyparts == 'tailbase') %>%
-  filter(peak != 0) %>%
-  plot_ly(x = ~t, y = ~ peaksize, type = 'scatter', mode = 'lines+markers')
-
-p3 <- q %>% filter(bodyparts == 'tailbase') %>%
-  filter(peak != 0) %>%
-  plot_ly(x = ~t, y = ~ peakgap, type = 'scatter', mode = 'lines+markers')
-
-subplot(p1, p2, p3, nrows = 3, shareX = TRUE)
-```
-
-```{r}
-q <- 
-  data %>%
-  select(-contains('bodyaxis')) %>%
-  filter(trial == '062921_A2V8_02') %>%
-  get_body_axis() 
-```
-
-```{r}
-q %>%
-  filter(bodyparts == 'tailtip') %>%
-  plot_ly(x = ~t, y = ~bodyaxisxfr, type = 'scatter', mode = 'lines+markers')
-```
 
 ```{r}
 tailbeatdata %>%
+  filter((freq > 0.2) & (freq < 5)) %>%
   mutate(stridelen = swimvel/len / freq) %>%
   ggplot(aes(x = swimvel, y = stridelen, color = Treatment)) +
   geom_point() +
   facet_wrap(~Treatment) +
-  lims(x = c(0, 400), y = c(0, 2))
+  lims(x = c(0, 300), y = c(0, 1))
 ```
 
 ```{r}
@@ -366,5 +277,40 @@ tailbeatdata %>%
   ggplot(aes(x = swimvel, y = wavelength, color = Treatment)) +
   geom_point() +
   facet_wrap(~Treatment)
+```
+
+```{r}
+tailbeatdata2 <-
+  tailbeatdata %>%
+  filter(freq > 0.1 & freq < 5) %>%
+  mutate(St = 2*freq*amp / swimvel,
+         stridelen = swimvel/len / freq,
+         slip = swimvel / wavespeed)
+
+p1 <- ggplot(tailbeatdata2, aes(x = Treatment, y = stridelen, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median) +
+  ylim(0, 1)
+
+p2 <- ggplot(tailbeatdata2, aes(x = Treatment, y = St, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median) +
+  ylim(0, 1)
+
+p3 <- ggplot(tailbeatdata2, aes(x = Treatment, y = slip, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median) +
+  ylim(0,1)
+
+p4 <- ggplot(tailbeatdata2, aes(x = Treatment, y = amp, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median)
+  #ylim(0,1)
+
+(p1 + p2 + p3 + p4) + plot_layout(guides = "collect")
 ```
 

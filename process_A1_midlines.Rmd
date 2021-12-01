@@ -210,3 +210,37 @@ tailbeatdata %>%
   facet_wrap(~Treatment)
 ```
 
+```{r}
+tailbeatdata2 <-
+  tailbeatdata %>%
+  filter(freq > 0.1 & freq < 5) %>%
+  mutate(St = 2*freq*amp / swimvel,
+         stridelen = swimvel/len / freq,
+         slip = swimvel / wavespeed)
+
+p1 <- ggplot(tailbeatdata2, aes(x = Treatment, y = stridelen, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median) +
+  ylim(0, 1)
+
+p2 <- ggplot(tailbeatdata2, aes(x = Treatment, y = St, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median) +
+  ylim(0, 1)
+
+p3 <- ggplot(tailbeatdata2, aes(x = Treatment, y = slip, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median) +
+  ylim(0,1)
+
+p4 <- ggplot(tailbeatdata2, aes(x = Treatment, y = amp, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median)
+  #ylim(0,1)
+
+(p1 + p2 + p3 + p4) + plot_layout(guides = "collect")
+```
