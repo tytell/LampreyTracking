@@ -215,6 +215,19 @@ if ('Date.y' %in% colnames(data)) {
 
 ```{r}
 data %>%
+  filter(Treatment == "Control") %>%
+  distinct(trial)
+```
+
+```{r}
+data %>%
+  filter(trial == "062921_A2V10_04") %>%
+  ggplot(aes(x = bodyparts, y = curve, group = frame)) +
+  geom_path()
+```
+
+```{r}
+data %>%
   plot_ly(x = ~t, y = ~swimvels, color = ~trial, type = 'scatter', mode = 'lines') %>%
   layout(showlegend = FALSE)
 ```
@@ -225,8 +238,12 @@ tailbeatdata <-
   arrange(trial, frame, bodyparts) %>%
   group_by(trial, frame) %>%
   dplyr::rename(swimvel0 = swimvel, swimvel = swimvels) %>%
-  summarize(across(c(freq,swimvel, Treatment, len, amp, wavespeed, wavelength), ~ last(na.omit(.x))))
-
+  summarize(across(c(freq,swimvel, Treatment, len, amp, wavespeed, wavelength, cycle_num), ~ last(na.omit(.x))),
+            curve.mn = mean(curve, na.rm=TRUE)) %>%
+  group_by(trial) %>%
+  mutate(ncycles = max(cycle_num, na.rm = TRUE),
+         iszerofreq = any(freq == 0, na.rm = TRUE)) %>%
+  ungroup()
 ```
 
 ```{r}
@@ -242,7 +259,6 @@ tailbeatdata %>%
 
 ```{r}
 tailbeatdata %>%
-  filter((freq > 0.2) & (freq < 5)) %>%
   mutate(stridelen = swimvel/len / freq) %>%
   ggplot(aes(x = swimvel, y = stridelen, color = Treatment)) +
   geom_point() +
@@ -283,10 +299,14 @@ tailbeatdata %>%
 tailbeatdata2 <-
   tailbeatdata %>%
   filter(freq > 0.1 & freq < 5) %>%
+  group_by(Treatment, trial, frame) %>%
+  summarize(across(c(freq, amp, swimvel, wavespeed, wavelength, len), ~ median(.x, na.rm = TRUE))) %>%
   mutate(St = 2*freq*amp / swimvel,
          stridelen = swimvel/len / freq,
          slip = swimvel / wavespeed)
+```
 
+```{r}
 p1 <- ggplot(tailbeatdata2, aes(x = Treatment, y = stridelen, color = Treatment)) +
   geom_violin() +
   geom_boxplot(width = 0.1) +
@@ -311,6 +331,18 @@ p4 <- ggplot(tailbeatdata2, aes(x = Treatment, y = amp, color = Treatment)) +
   stat_summary(aes(group = 1), geom = "line", fun = median)
   #ylim(0,1)
 
-(p1 + p2 + p3 + p4) + plot_layout(guides = "collect")
+p5 <- ggplot(tailbeatdata2, aes(x = Treatment, y = swimvel, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median)
+  #ylim(0,1)
+
+p6 <- ggplot(tailbeatdata2, aes(x = Treatment, y = freq, color = Treatment)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  stat_summary(aes(group = 1), geom = "line", fun = median)
+  #ylim(0,1)
+
+(p1 + p2 + p3 + p4 + p5 + p6) + plot_layout(guides = "collect")
 ```
 
