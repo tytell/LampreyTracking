@@ -1,12 +1,14 @@
 require(tidyverse)
+require(RcppRoll)
 
 process_filepath <- function(filepath) {
-  df <- str_match(filepath, 'Animal(\\d)/(Control|\\d[dh]pi)/(\\d{6})')
-  colnames(df) <- c("all", "Animal", "Treatment", "Date")
+  df <- str_match(filepath, 'Exp_(\\d{6})/Animal\\s*(\\d)/(Control|\\d[dh]pi)/(\\d{6})')
+  colnames(df) <- c("all", "Date", "Animal", "Treatment", "VideoDate")
   df %>%
     as_tibble() %>%
     mutate(Date = lubridate::mdy(Date),
-           Treatment = factor(Treatment, levels = treatments)) %>%
+           Treatment = factor(Treatment, levels = treatments),
+           VideoDate = lubridate::mdy(VideoDate)) %>%
     select(-all)
 }
 
@@ -14,12 +16,11 @@ load_katz_data <- function(filename, scales, widthdata, fps, bodypartorder, show
   if (showfile) {
     print(basename(filename))
   }
-  scales <- scales %>%
-    select(-Date)
-  
   df <- read_csv(filename, show_col_types = FALSE) %>%
-    bind_cols(process_filepath(filename)) %>%
-    left_join(scales, by = c('Animal', 'Treatment')) %>%
+    bind_cols(process_filepath(filename)) 
+  
+  df %>%
+    left_join(scales, by = c('Date', 'Animal', 'Treatment')) %>%
     mutate(t = frame / fps,
            xmm = x * Scale,
            ymm = y * Scale,
@@ -254,13 +255,63 @@ unwrap <- function(y, modulus = 2*pi, jump = 0.5, na.rm = FALSE) {
   y + step
 }
 
+deriv <- function(x, y, ord = 1, method = 'direct') {
+  #' Estimate first or second derivatives for dy/dx.
+  #' 
+  #' Uses central differencing where possible.
+  #' 
+  #' @param x x variable. Does not need to be evenly spaced.
+  #' @param y y variable.
+  #' @param ord Order of the derivative (1 or 2).
+  #' @param method Method for taking second derivatives. Either
+  #'   * 'direct' (default) Uses a direct formula, based on a central difference of
+  #'     forward and backward differences, from [https://mathformeremortals.wordpress.com/2013/01/12/a-numerical-second-derivative-from-three-points/]
+  #'   * 'repeat' Repeat two first derivatives.
+  
+  if (ord == 1) {
+    # standard central difference formula for first derivative
+    D <- (lead(y) - lag(y)) / (lead(x) - lag(x))
+    
+    # forward difference for the first point
+    D[1] <- (y[2] - y[1]) / (x[2] - x[1])
+    
+    # backward difference for the second
+    n <- length(x)
+    D[n] <- (y[n] - y[n-1]) / (x[n] - x[n-1])
+  } else if (ord == 2) {
+    if (method == 'direct') {
+      # direct formula for the second derivative, given uneven spacing in x
+      # see https://mathformeremortals.wordpress.com/2013/01/12/a-numerical-second-derivative-from-three-points/
+      D <- 2*lag(y) / ((x - lag(x))*(lead(x) - lag(x))) -
+        2*y / ((lead(x) - x)*(x - lag(x))) +
+        2*lead(y) / ((lead(x) - x)*(lead(x) - lag(x)))
+    } else if (method == 'repeat') {
+      # second derivative by repeating first derivatives
+      dydx <- deriv(x, y, ord = 1)
+      D <- deriv(x, dydx, ord = 1)
+    }
+  }
+  D
+}
+
+get_curvature_in_frame <- function(s, x, y) {
+  #' Estimates curvature for a single curve
+  #' 
+  #' Assumes that points are in order
+  
+  dx <- deriv(s, x)
+  dy <- deriv(s, y)
+  ddx <- deriv(s, x, 2, method='direct')
+  ddy <- deriv(s, y, 2, method='direct')
+  
+  (dx*ddy - dy*ddx) / ((dx^2 + dy^2)^1.5)
+}
+
 get_curvature <- function(df) {
   df %>%
     arrange(frame, bodyparts) %>%
     group_by(frame) %>%
-    mutate(segang = unwrap(atan2(ymm - lag(ymm), xmm - lag(xmm)), na.rm = TRUE),
-           dsegang = lead(segang) - segang,
-           curve = dsegang / ((lead(s) + lag(s))/2))
+    mutate(curve = get_curvature_in_frame(s, xmm, ymm) * len)
 }
 
 get_cycles <- function(df, track = 'excursion',
@@ -614,25 +665,5 @@ get_all_kinematics <- function(df,
     get_wavelength()
 }
 
-get_point_order <- function(df) {
-  df %>%
-    group_by(trial, frame) %>%
-    group_modify(~ get_point_order_in_frame(.x))
-}
 
-get_point_order_in_frame <- function(df) {
-  xy <- select(df, xmm, ymm)
-  D <- dist(xy)
-  D <- as.matrix(D)
-  
-  n <- dim(D)[1]
-  ind <- rep(NA_integer_, n)
-  for (i in seq_len(n-1)) {
-    d1 <- D[(i+1):n,i]
-    ind[i] = which.min(d1) + i
-  }
-  
-  df$nextpoint <- ind
-  
-  df
-}
+
