@@ -1,6 +1,8 @@
 ---
 title: "R Notebook"
-output: html_notebook
+output:
+  pdf_document: default
+  html_notebook: default
 ---
 
 ```{r setup}
@@ -175,8 +177,8 @@ p1 / p2
 
 ```{r}
 data %>%
-  plot_ly(x = ~t, y = ~swimvel, color = ~trial, type = 'scatter', mode = 'lines') %>%
-  layout(showlegend = FALSE)
+  ggplot(aes(x = t, y = swimvel, color = Treatment)) +
+  geom_line(aes(group = trial))
 ```
 
 ```{r}
@@ -246,6 +248,17 @@ tailbeatdata %>%
 ```
 
 ```{r}
+tailbeatdata2 <-
+  tailbeatdata %>%
+  filter(freq > 0.1 & freq < 5) %>%
+  group_by(Treatment, trial, frame) %>%
+  summarize(across(c(freq, amp, swimvel, wavespeed, wavelength, len), ~ median(.x, na.rm = TRUE))) %>%
+  mutate(St = 2*freq*amp / swimvel,
+         stridelen = swimvel/len / freq,
+         slip = swimvel / wavespeed)
+```
+
+```{r}
 p1 <- ggplot(tailbeatdata2, aes(x = Treatment, y = stridelen, color = Treatment)) +
   geom_violin() +
   geom_boxplot(width = 0.1) +
@@ -283,4 +296,22 @@ p6 <- ggplot(tailbeatdata2, aes(x = Treatment, y = freq, color = Treatment)) +
   #ylim(0,1)
 
 (p1 + p2 + p3 + p4 + p5 + p6) + plot_layout(guides = "collect")
+```
+```{r}
+ampenvelope <-
+  data %>%
+  get_amplitude_envelope()
+```
+
+```{r}
+head(ampenvelope)
+```
+
+```{r}
+
+ampenvelope %>%
+  ggplot(aes(x = s.even, y = amp.even, color = Treatment, fill = Treatment)) +
+  # geom_path(aes(group = paste(trial, cycle)), alpha = 0.2) +
+  stat_summary(geom = 'ribbon', fun.data = 'mean_se', alpha = 0.5) +
+  stat_summary(geom = 'path', fun = 'mean')
 ```

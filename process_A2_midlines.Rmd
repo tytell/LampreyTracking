@@ -206,7 +206,8 @@ data <- read_csv(file.path(boxdir,'2021/Processed Data/A2data-goodframes.csv'),
                                   Date.x = col_date(), 
                                   Animal = col_character(),
                                   Treatment = col_factor(levels = treatments),
-                                  bodyparts = col_factor(levels = bodypartorder)))
+                                  bodyparts = col_factor(levels = bodypartorder),
+                                  curve = col_number()))
 
 if ('Date.y' %in% colnames(data)) {
   data <- data %>%
@@ -222,11 +223,27 @@ data %>%
 ```
 
 ```{r}
-data %>%
-  filter(trial == "062921_A2V10_04") %>%
-  ggplot(aes(x = bodyparts, y = curve, group = frame)) +
-  geom_path()
+data1 <-
+  data %>%
+  filter(trial == '062921_A2V10_04')
 ```
+
+```{r}
+p1 <-
+  data1 %>%
+  filter((frame >= 20) & (frame <= 30)) %>%
+  ggplot(aes(x = xmm - comx, y = ymm - comy, color = frame)) +
+  geom_path(aes(group = frame)) +
+  coord_equal()
+
+p2 <- data1 %>%
+  filter((frame >= 20) & (frame <= 30)) %>%
+  ggplot(aes(x = s, y = curve, color = frame)) +
+  geom_path()
+
+p1 / p2
+```
+
 
 ```{r}
 data %>%
