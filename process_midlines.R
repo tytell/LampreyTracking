@@ -1,5 +1,6 @@
 require(tidyverse)
 require(RcppRoll)
+require(hdf5r)
 
 process_filepath <- function(filepath) {
   df <- str_match(filepath, 'Exp_(\\d{6})/Animal\\s*(\\d)/(Control|\\d[dh]pi)/(\\d{6})')
@@ -704,5 +705,20 @@ get_all_kinematics <- function(df,
     get_wavelength()
 }
 
+write_hdf5 <- function(df, filename, mode='w') {
+  file.h5 <- H5File$new(filename, mode)
+  file.h5[['data']] <- df
+  
+  file.h5$close_all()
+}
 
+read_hdf5 <- function(filename) {
+  file.h5 <- H5File$new(filename, 'r')
+  dset <- file.h5[['data']]
+  
+  df <- as_tibble(dset$read())
 
+  file.h5$close_all()
+  
+  df
+}
