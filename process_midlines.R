@@ -638,6 +638,45 @@ get_wavelength <- function(df) {
     left_join(nodes, by = c("frame", "bodyparts"))
 }
 
+interpolate_amplitude_even <- function(df, s.even) {
+  if (nrow(df) != length(s.even)) {
+    df$s.even = NA
+    df$amp.even = NA
+  }
+  else {
+    # s.even[length(s.even)] <- min(s.even[length(s.even)], max(df$s))
+    
+    amp.even <-
+      with(df, {
+        good <- !is.na(s) & !is.na(amp)
+        if ((sum(good) > 3) & good[1] & good[length(good)]) {
+          spline(s[good], amp[good], xout = s.even)$y
+        } else {
+          NA
+        }
+    })
+    
+    df$amp.even = amp.even
+    df$s.even = s.even
+  }
+  
+  df
+}
+
+get_amplitude_envelope <- function(df) {
+  s.even <- pracma::linspace(0, first(df$len), n = length(levels(df$bodyparts)))
+  
+  df %>%
+    ungroup() %>%
+    filter(!is.na(amp)) %>%
+    arrange(trial, cycle, bodyparts) %>%
+    group_by(trial, cycle) %>%
+    group_modify(~ interpolate_amplitude_even(.x, s.even)) %>%
+    mutate(swimvel = mean(swimvel, na.rm = TRUE)) %>%
+    ungroup() %>%
+    select(Treatment, trial, cycle, bodyparts, s.even, amp.even, swimvel)
+}
+
 get_all_kinematics <- function(df,
                                widthdata,
                                smooth.excursion = 0.2,
