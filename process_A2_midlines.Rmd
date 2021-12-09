@@ -1,6 +1,8 @@
 ---
 title: "Process A2 midlines"
-output: html_notebook
+output:
+  pdf_document: default
+  html_notebook: default
 ---
 
 ```{r setup}
@@ -228,8 +230,8 @@ data %>%
 
 ```{r}
 data %>%
-  plot_ly(x = ~t, y = ~swimvels, color = ~trial, type = 'scatter', mode = 'lines') %>%
-  layout(showlegend = FALSE)
+  ggplot(aes(x = t, y = swimvel, color = Treatment)) +
+  geom_line(aes(group = trial))
 ```
 
 ```{r}
@@ -345,4 +347,21 @@ p6 <- ggplot(tailbeatdata2, aes(x = Treatment, y = freq, color = Treatment)) +
 
 (p1 + p2 + p3 + p4 + p5 + p6) + plot_layout(guides = "collect")
 ```
+```{r}
+ampenvelope <-
+  data %>%
+  get_amplitude_envelope()
+```
 
+```{r}
+ampenvelope
+```
+
+```{r}
+
+ampenvelope %>%
+  ggplot(aes(x = s.even, y = amp.even, color = Treatment, fill = Treatment)) +
+  # geom_path(aes(group = paste(trial, cycle)), alpha = 0.2) +
+  stat_summary(geom = 'ribbon', fun.data = 'mean_se', alpha = 0.5) +
+  stat_summary(geom = 'path', fun = 'mean')
+```

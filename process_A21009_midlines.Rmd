@@ -1,6 +1,8 @@
 ---
 title: "R Notebook"
-output: html_notebook
+output:
+  pdf_document: default
+  html_notebook: default
 ---
 
 ```{r setup}
@@ -109,16 +111,16 @@ data.nooutliers <- data %>%
 
 ```{r}
 data.nooutliers %>%
-  #filter(frame %% 5 == 0) %>%
+  filter(frame %% 5 == 0) %>%
   #filter(trial == '100921_A2V6_04' | trial == '100921_A2V6_13') %>%
   #filter(trial == '100921_A2V6_13') %>%
   group_by(trial, frame) %>%
   #filter(bodyparts == 'tailbase') %>%
   ggplot(aes(x = xmm, y = ymm)) +
-  geom_line(aes(group = frame)) +
+  geom_line(aes(group = frame, color = Treatment)) +
   geom_point(data = ~filter(.x, isoutlier), aes(x = xmm0, y = ymm0), size=0.5, color='red') +
   facet_wrap(~trial, scales = 'free') +
-  scale_color_viridis_c() + #limits = c(0, 20)) +
+  # scale_color_viridis_c() + #limits = c(0, 20)) +
   theme(
     # strip.background = element_blank(),
     # strip.text.x = element_blank(),
@@ -229,8 +231,8 @@ p1 / p2
 
 ```{r}
 data %>%
-  plot_ly(x = ~t, y = ~swimvel, color = ~trial, type = 'scatter', mode = 'lines') %>%
-  layout(showlegend = FALSE)
+  ggplot(aes(x = t, y = swimvel, color = Treatment)) +
+  geom_line(aes(group = trial))
 ```
 
 ```{r}
@@ -348,4 +350,22 @@ p6 <- ggplot(tailbeatdata2, aes(x = Treatment, y = freq, color = Treatment)) +
   #ylim(0,1)
 
 (p1 + p2 + p3 + p4 + p5 + p6) + plot_layout(guides = "collect")
+```
+```{r}
+ampenvelope <-
+  data %>%
+  get_amplitude_envelope()
+```
+
+```{r}
+ampenvelope
+```
+
+```{r}
+
+ampenvelope %>%
+  ggplot(aes(x = s.even, y = amp.even, color = Treatment, fill = Treatment)) +
+  # geom_path(aes(group = paste(trial, cycle)), alpha = 0.2) +
+  stat_summary(geom = 'ribbon', fun.data = 'mean_se', alpha = 0.5) +
+  stat_summary(geom = 'path', fun = 'mean')
 ```
