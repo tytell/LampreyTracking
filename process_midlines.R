@@ -675,7 +675,7 @@ get_amplitude_envelope <- function(df) {
     group_modify(~ interpolate_amplitude_even(.x, s.even)) %>%
     mutate(swimvel = mean(swimvel, na.rm = TRUE)) %>%
     ungroup() %>%
-    select(Treatment, trial, cycle, bodyparts, s.even, amp.even, swimvel)
+    select(trial, cycle, bodyparts, s.even, amp.even, swimvel, len, any_of(c("Treatment", "timepoint", "lesion")))
 }
 
 get_all_kinematics <- function(df,
