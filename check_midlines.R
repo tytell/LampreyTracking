@@ -28,19 +28,32 @@ get_point_order_in_frame <- function(df) {
 }
 
 spline_outlier_replace <- function(df) {
-  t1 <- with(df, t[!isoutlier])
+  if (sum(!df$isoutlier) < 3) {
+    df$xmm <- NA_real_
+    df$ymm <- NA_real_
+  } else {
+    t1 <- with(df, t[!isoutlier])
   
-  span <- with(df, (t >= t1[1]) & (t <= t1[length(t1)]))
-  
-  df <-
-    df %>%
-    mutate(xmm = spline(t1, xmm[!isoutlier], xout = t)$y,
-           ymm = spline(t1, ymm[!isoutlier], xout = t)$y)
-  
-  df$xmm[!span] = NA_real_
-  df$ymm[!span] = NA_real_
+    span <- with(df, (t >= t1[1]) & (t <= t1[length(t1)]))
+    
+    df <-
+      df %>%
+      mutate(xmm = spline(t1, xmm[!isoutlier], xout = t)$y,
+             ymm = spline(t1, ymm[!isoutlier], xout = t)$y)
+    
+    df$xmm[!span] = NA_real_
+    df$ymm[!span] = NA_real_
+  }
   
   df
+}
+
+runmed_check <- function(x, k, ...) {
+  if (sum(!is.na(x)) < k) {
+    xmed <- rep(NA_real_, length(x))
+  } else {
+    xmed <- runmed(x, k, ...)
+  }
 }
 
 detect_and_replace_outliers <- function(df, k = 31, outlierthreshold = 30, 
@@ -67,8 +80,8 @@ detect_and_replace_outliers <- function(df, k = 31, outlierthreshold = 30,
            ymm0 = ymm,
            xmm1 = if_else(likelihood < likelihoodthreshold, NA_real_, xmm),
            ymm1 = if_else(likelihood < likelihoodthreshold, NA_real_, ymm),
-           xmed = runmed(xmm1, k, endrule = 'median', na.action = "na.omit"),
-           ymed = runmed(ymm1, k, endrule = 'median', na.action = "na.omit"),
+           xmed = runmed_check(xmm1, k, endrule = 'median', na.action = "na.omit"),
+           ymed = runmed_check(ymm1, k, endrule = 'median', na.action = "na.omit"),
            dxmed = xmm1 - xmed,
            dymed = ymm1 - ymed,
            dist_to_med = sqrt(dxmed^2 + dymed^2))
