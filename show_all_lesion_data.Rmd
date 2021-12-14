@@ -105,6 +105,19 @@ data <-
   get_tailbeat_data(data_all)
 ```
 
+Number of half tail beats at each time point for each animal.
+```{r}
+data %>%
+  group_by(Animal, timepoint) %>%
+  tally()
+```
+And number of tailbeats for each animal.
+```{r}
+data %>%
+  group_by(Animal) %>%
+  tally()
+```
+
 This plot shows swim speed against time point for each of the individuals (as violin plots), plus overall box plots showing the effect of medial vs bilateral lesions. (colors are bad, but I couldn't figure out how to color them differently).
 ```{r}
 data %>%
