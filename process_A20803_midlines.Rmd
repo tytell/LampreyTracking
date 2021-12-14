@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "Process A2-0803 data"
 output:
   pdf_document: default
   html_notebook: default
@@ -23,7 +23,7 @@ source('check_midlines.R')
 Directory where all the tracked data files are stored.
 ```{r}
 boxdir <- '/Users/etytel01/Box/Katz lamprey kinematics'
-datadir <- file.path(boxdir,'2021/Processed Data/Exp_100921')
+datadir <- file.path(boxdir,'2021/Processed Data/Exp_080321')
 ```
 
 Names of the treatments.
@@ -44,6 +44,7 @@ fps = 60
 Load in approximate widthdata for ammocoetes, which we'll use for locating the center of mass.
 ```{r}
 widthdata <- read_csv(file.path(boxdir,'2021/fishwidth.csv'))
+width <- widthdata$ammowidth
 ```
 
 Digitized scales for each day of filming.
@@ -67,7 +68,7 @@ datafilenames <- datafilenames[str_detect(datafilenames, 'shuffle1')]
 ```
 
 ```{r}
-datafilenames <- datafilenames[str_detect(datafilenames, '100921')]
+datafilenames <- datafilenames[str_detect(datafilenames, '080321')]
 ```
 
 ## Load and process the data
@@ -78,14 +79,14 @@ Note that these chunks don't run by default, since they take a long time.
 ```{r eval = FALSE}
 #options(error = recover)
 data <- purrr::map_dfr(datafilenames, ~ load_katz_data(.x, scales,
-                                                       widthdata = widthdata$ammowidth, fps = fps,
+                                                       widthdata = width, fps = fps,
                  bodypartorder = bodypartorder, showfile = TRUE))
-write_csv(data, file.path(boxdir,'2021/Processed Data/A21009data.csv'))
+write_csv(data, file.path(boxdir,'2021/Processed Data/A20803data.csv'))
 ```
 
 This loads the previous processed data file, as produced above.
 ```{r}
-data <- read_csv(file.path(boxdir,'2021/Processed Data/A21009data.csv'),
+data <- read_csv(file.path(boxdir,'2021/Processed Data/A20803data.csv'),
                                   col_types = list(Animal = col_character(),
                                   Treatment = col_factor(levels = treatments),
                                   bodyparts = col_factor(levels = bodypartorder)))
@@ -112,12 +113,13 @@ data.nooutliers <- data %>%
 ```{r}
 data.nooutliers %>%
   filter(frame %% 5 == 0) %>%
-  #filter(trial == '100921_A2V6_04' | trial == '100921_A2V6_13') %>%
-  #filter(trial == '100921_A2V6_13') %>%
+  filter(Treatment == 'Control') %>%
+  #filter(trial == '080321_A2V6_04' | trial == '080321_A2V6_13') %>%
+  #filter(trial == '080321_A2V6_13') %>%
   group_by(trial, frame) %>%
   #filter(bodyparts == 'tailbase') %>%
   ggplot(aes(x = xmm, y = ymm)) +
-  geom_line(aes(group = frame, color = Treatment)) +
+  geom_line(aes(group = frame), color = 'black') +
   geom_point(data = ~filter(.x, isoutlier), aes(x = xmm0, y = ymm0), size=0.5, color='red') +
   facet_wrap(~trial, scales = 'free') +
   # scale_color_viridis_c() + #limits = c(0, 20)) +
@@ -130,6 +132,49 @@ data.nooutliers %>%
   )
 ```
 
+```{r}
+data.nooutliers %>%
+  filter(frame %% 5 == 0) %>%
+  filter(Treatment == '2hpi') %>%
+  #filter(trial == '080321_A2V6_04' | trial == '080321_A2V6_13') %>%
+  #filter(trial == '080321_A2V6_13') %>%
+  group_by(trial, frame) %>%
+  #filter(bodyparts == 'tailbase') %>%
+  ggplot(aes(x = xmm, y = ymm)) +
+  geom_line(aes(group = frame), color = 'black') +
+  geom_point(data = ~filter(.x, isoutlier), aes(x = xmm0, y = ymm0), size=0.5, color='red') +
+  facet_wrap(~trial, scales = 'free') +
+  # scale_color_viridis_c() + #limits = c(0, 20)) +
+  theme(
+    # strip.background = element_blank(),
+    # strip.text.x = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  )
+```
+
+```{r}
+data.nooutliers %>%
+  filter(frame %% 5 == 0) %>%
+  filter(Treatment == '3dpi') %>%
+  #filter(trial == '080321_A2V6_04' | trial == '080321_A2V6_13') %>%
+  #filter(trial == '080321_A2V6_13') %>%
+  group_by(trial, frame) %>%
+  #filter(bodyparts == 'tailbase') %>%
+  ggplot(aes(x = xmm, y = ymm)) +
+  geom_line(aes(group = frame), color = 'black') +
+  geom_point(data = ~filter(.x, isoutlier), aes(x = xmm0, y = ymm0), size=0.5, color='red') +
+  facet_wrap(~trial, scales = 'free') +
+  # scale_color_viridis_c() + #limits = c(0, 20)) +
+  theme(
+    # strip.background = element_blank(),
+    # strip.text.x = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  )
+```
 Look for variation in length
 ```{r}
 animallengths <-
@@ -155,11 +200,11 @@ This also takes a long time
 data.nooutliers <-
   data.nooutliers %>%
   get_point_order()
-write_csv(data.nooutliers, file.path(boxdir,'2021/Processed Data/A21009data.csv'))
+write_csv(data.nooutliers, file.path(boxdir,'2021/Processed Data/A20803data.csv'))
 ```
 
 ```{r}
-data <- read_csv(file.path(boxdir,'2021/Processed Data/A21009data.csv'), 
+data <- read_csv(file.path(boxdir,'2021/Processed Data/A20803data.csv'), 
                  col_types = list(Animal = col_character(),
                                   Treatment = col_factor(levels = treatments),
                                   bodyparts = col_factor(levels = bodypartorder)))
@@ -186,15 +231,15 @@ data <-
   ungroup() %>%
   filter(goodpointorder & goodlength) %>%
   group_by(filename) %>%
-  group_modify(~ get_all_kinematics(.x, widthdata = widthdata$ammowidth))
-write_csv(data, file.path(boxdir,'2021/Processed Data/A21009data-goodframes.h5'))
+  group_modify(~ get_all_kinematics(.x, widthdata = width))
+write_csv(data, file.path(boxdir,'2021/Processed Data/A20803data-goodframes.csv'))
 ```
 
 
 # Plot kinematics
 
 ```{r}
-data <- read_csv(file.path(boxdir,'2021/Processed Data/A21009data-goodframes.h5'),
+data <- read_csv(file.path(boxdir,'2021/Processed Data/A20803data-goodframes.csv'),
                  col_types = list(Animal = col_character(),
                                   Treatment = col_factor(levels = treatments),
                                   bodyparts = col_factor(levels = bodypartorder),
@@ -210,7 +255,7 @@ data %>%
 ```{r}
 data1 <-
   data %>%
-  filter(trial == '100921_A2V6_07')
+  filter(trial == '080321_A2V12_05')
 ```
 
 ```{r}
@@ -358,7 +403,7 @@ ampenvelope <-
 ```
 
 ```{r}
-ampenvelope
+head(ampenvelope)
 ```
 
 ```{r}
