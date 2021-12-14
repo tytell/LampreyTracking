@@ -187,14 +187,14 @@ data <-
   filter(goodpointorder & goodlength) %>%
   group_by(filename) %>%
   group_modify(~ get_all_kinematics(.x, widthdata = widthdata$ammowidth))
-write_csv(data, file.path(boxdir,'2021/Processed Data/A21009data-goodframes.h5'))
+write_csv(data, file.path(boxdir,'2021/Processed Data/A21009data-goodframes.csv'))
 ```
 
 
 # Plot kinematics
 
 ```{r}
-data <- read_csv(file.path(boxdir,'2021/Processed Data/A21009data-goodframes.h5'),
+data <- read_csv(file.path(boxdir,'2021/Processed Data/A21009data-goodframes.csv'),
                  col_types = list(Animal = col_character(),
                                   Treatment = col_factor(levels = treatments),
                                   bodyparts = col_factor(levels = bodypartorder),
