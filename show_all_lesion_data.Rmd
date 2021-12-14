@@ -1,6 +1,8 @@
 ---
 title: "Show all lesion data"
-output: html_notebook
+output:
+  pdf_document: default
+  html_notebook: default
 ---
 
 ```{r setup}
@@ -18,13 +20,14 @@ Directory where the data files are stored.
 boxdir <- '/Users/etytel01/Box/Katz lamprey kinematics/2021/Processed Data'
 ```
 
+I could have the type of lesions backwards here. The first two files are from the A1-0629 and A2-0629 data sets.
 ```{r}
 datafiles <- c('A1data-goodframes.csv',
                'A2data-goodframes.csv',
                'A20803data-goodframes.csv',
                'A21009data-goodframes.csv')
 
-treatments <- c('medial', 'bilateral', 'medial', 'bilateral')
+lesions <- c('medial', 'bilateral', 'medial', 'bilateral')
 ```
 
 Names of the time points.
@@ -37,20 +40,27 @@ Body parts are named in DeepLabCut, but they have an order along the body, given
 bodypartorder = c("snout", "gill", "mid1", "mid2", "anus", "mid4", "tailbase", "tailtip")
 ```
 
-Function to read in the main data table for each animal, get the values of different parameters at the tail, then get the medians across each tail beat cycle.
+Function to read in the main data table for each animal.
 ```{r}
-read_tailbeat_data <- function(filename, treatment) {
+read_kinematics_data <- function(filename, lesion) {
   df <- read_csv(filename, col_types = list(Animal = col_character(),
                                   Treatment = col_factor(levels = timepoints),
                                   bodyparts = col_factor(levels = bodypartorder),
                                   curve = col_number()))
   
-
+  df %>%
+    rename(timepoint = Treatment) %>%
+    mutate(lesion = lesion)
+}
+```
+  
+Function to get the values of different parameters at the tail, then get the medians across each tail beat cycle.
+```{r}
+get_tailbeat_data <- function(df) {
   tailbeatdata <-
     df %>%
-    rename(timepoint = Treatment) %>%
     arrange(trial, frame, bodyparts) %>%
-    group_by(Animal, timepoint, Date, trial, frame) %>%
+    group_by(Animal, timepoint, lesion, Date, trial, frame) %>%
     summarize(across(c(len,amp, cycle_num), ~ last(na.omit(.x))),
               across(c(freq,swimvel, wavespeed, wavelength), ~ mean(.x, na.rm = TRUE)),
               curve.mn = mean(curve, na.rm=TRUE)) %>%
@@ -61,73 +71,132 @@ read_tailbeat_data <- function(filename, treatment) {
 
   tailbeatdata %>%
     filter(freq > 0.1 & freq < 5) %>%
-    group_by(Animal, Date, timepoint, trial, cycle_num) %>%
+    group_by(Animal, Date, timepoint, lesion, trial, cycle_num) %>%
     summarize(across(c(freq, amp, swimvel, wavespeed, wavelength, len), ~ median(.x, na.rm = TRUE))) %>%
     mutate(St = 2*freq*amp / swimvel,
            stridelen = swimvel/len / freq,
-           slip = swimvel / wavespeed,
-           treatment = treatment) %>%
+           slip = swimvel / wavespeed) %>%
     ungroup()
 }
 ```
   
 Load in the four data files.
 ```{r}
-data <- map2_dfr(datafiles, treatments, 
-                 ~ read_tailbeat_data(file.path(boxdir, .x), .y))
+data_all <- map2_dfr(datafiles, lesions, 
+                 ~ read_kinematics_data(file.path(boxdir, .x), .y))
 ```
+
 Correct some issues with the dates and animal numbers.
 ```{r}
-data <-
-  data %>%
+data_all <-
+  data_all %>%
   mutate(Date = case_when(Date == ymd('20210630')  ~  ymd('20210629'),
                           Date == ymd('20210702')  ~  ymd('20210629'),
                           TRUE  ~  Date),
          Animal = if_else(Animal %in% c('1', '2'),
                           paste0(Animal, strftime(Date, format='%m%d')),
-                          Animal))
+                          Animal),
+         Animal = factor(Animal))
 ```
 
+Get the tail beat data.
+```{r}
+data <-
+  get_tailbeat_data(data_all)
+```
+
+This plot shows swim speed against time point for each of the individuals (as violin plots), plus overall box plots showing the effect of medial vs bilateral lesions. (colors are bad, but I couldn't figure out how to color them differently).
 ```{r}
 data %>%
   filter(timepoint %in% c('Control', '2hpi', '3dpi')) %>%
-  ggplot(aes(x = timepoint, y = swimvel, color = treatment)) +
-  geom_boxplot(aes(color = treatment)) +
-  geom_violin(aes(x = timepoint, color = paste(treatment, Animal)), width = 0.8) +
-  stat_summary(aes(group = treatment), position = position_dodge(width = 0.8), fun = 'median', geom = 'line')
+  ggplot(aes(x = timepoint, y = swimvel, color = lesion)) +
+  geom_boxplot(aes(color = lesion)) +
+  geom_violin(aes(x = timepoint, color = paste(lesion, Animal)), width = 0.8) +
+  stat_summary(aes(group = lesion), position = position_dodge(width = 0.8), fun = 'median', geom = 'line')
 ```
 
+Something is wrong with slip here. Don't use it. It should be less than 1, and it's more like 2.
 ```{r}
 data %>%
   filter(timepoint %in% c('Control', '2hpi', '3dpi'))  %>%
   ungroup() %>%
   ggplot(aes(x = timepoint, y = slip)) +
-  geom_boxplot(aes(color = treatment)) +
-  geom_violin(aes(color = paste(treatment, Animal)), width = 0.8) +
-  stat_summary(aes(group = treatment, color = treatment), position = position_dodge(width = 0.8), fun = 'median', geom = 'line') +
+  geom_boxplot(aes(color = lesion)) +
+  geom_violin(aes(color = paste(lesion, Animal)), width = 0.8) +
+  stat_summary(aes(group = lesion, color = lesion), position = position_dodge(width = 0.8), fun = 'median', geom = 'line') +
   ylim(0, 4)
 
 # 
 # %>%
-#   ggplot(aes(x = timepoint, y = wavespeed, color = treatment)) +
-#   geom_boxplot(aes(color = treatment)) +
-#   geom_violin(aes(x = timepoint, color = paste(treatment, Animal)), width = 0.8) +
-#   stat_summary(aes(group = treatment), position = position_dodge(width = 0.8), fun = 'median', geom = 'line') +
+#   ggplot(aes(x = timepoint, y = wavespeed, color = lesion)) +
+#   geom_boxplot(aes(color = lesion)) +
+#   geom_violin(aes(x = timepoint, color = paste(lesion, Animal)), width = 0.8) +
+#   stat_summary(aes(group = lesion), position = position_dodge(width = 0.8), fun = 'median', geom = 'line') +
 #   ylim(0,1)
 ```
+
+Strouhal number. Close to 0.3 is supposed to be most efficient. Higher numbers are less efficient.
 ```{r}
 data %>%
   filter(timepoint %in% c('Control', '2hpi', '3dpi')) %>%
-  ggplot(aes(x = timepoint, y = freq, color = treatment)) +
-  geom_boxplot(aes(color = treatment)) +
-  geom_violin(aes(x = timepoint, color = paste(treatment, Animal)), width = 0.8) +
-  stat_summary(aes(group = treatment), position = position_dodge(width = 0.8), fun = 'median', geom = 'line')
+  ggplot(aes(x = timepoint, y = St, color = lesion)) +
+  geom_boxplot(aes(color = lesion)) +
+  geom_violin(aes(x = timepoint, color = paste(lesion, Animal)), width = 0.8) +
+  stat_summary(aes(group = lesion), position = position_dodge(width = 0.8), fun = 'median', geom = 'line') +
+  ylim(0, 2)
 ```
 
+Stride length. Higher is better. Values between 0.5 and 1 are pretty normal.
 ```{r}
 data %>%
-  filter(Animal == '10629') %>%
-  get_amplitude_envelope()
+  filter(timepoint %in% c('Control', '2hpi', '3dpi')) %>%
+  ggplot(aes(x = timepoint, y = stridelen, color = lesion)) +
+  geom_boxplot(aes(color = lesion)) +
+  geom_violin(aes(x = timepoint, color = paste(lesion, Animal)), width = 0.8) +
+  stat_summary(aes(group = lesion), position = position_dodge(width = 0.8), fun = 'median', geom = 'line') +
+  ylim(0, 1.5)
+```
+
+Tail beat frequency, cutting off frequencies above 5Hz, because they're probably errors.
+```{r}
+data %>%
+  filter(timepoint %in% c('Control', '2hpi', '3dpi')) %>%
+  ggplot(aes(x = timepoint, y = freq, color = lesion)) +
+  geom_boxplot(aes(color = lesion)) +
+  geom_violin(aes(x = timepoint, color = paste(lesion, Animal)), width = 0.8) +
+  stat_summary(aes(group = lesion), position = position_dodge(width = 0.8), fun = 'median', geom = 'line')
+```
+
+Get the amplitude envelopes
+```{r}
+ampenv <-
+  data_all %>%
+  group_by(Animal) %>%
+  group_modify(~ get_amplitude_envelope(.x))
+
+head(ampenv)
+```
+Normalize everything to body length and round the arc length along the body to 3 decimals.
+```{r}
+ampenv <-
+  ampenv %>%
+  ungroup() %>%
+  mutate(s.even = s.even / len,
+         s.even = floor(s.even * 1000) / 1000,
+         amp.even = amp.even / len)
+```
+
+Plot amplitude envelopes +- 1 standard deviation.
+```{r}
+ampenv %>%
+  ungroup() %>%
+  filter(timepoint %in% c('Control', '2hpi', '3dpi')) %>%
+  ggplot(aes(x = s.even, y = amp.even, color = lesion, fill = lesion)) +
+  # geom_path(aes(group = paste(trial, cycle)), alpha = 0.2) +
+  stat_summary(geom = 'ribbon', fun.data = 'mean_sdl', fun.args = list(mult = 1), alpha = 0.5) +
+  stat_summary(geom = 'path', fun = 'mean') +
+  facet_grid(. ~ timepoint)
+
 ```
 
 
